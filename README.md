@@ -6,7 +6,7 @@
 
 ## ✨ Features
 
-- **Conversational Data Analysis:** Chat directly with your data using Gemini 2.5 Flash / Pro.
+- **Conversational Data Analysis:** Chat directly with your data using Gemini.
 - **Automated Data Cleaning:** The system handles messy data, standardizing columns and types behind the scenes.
 - **Instant Visualizations:** Ask for a bar chart or a scatter plot, and the AI will write and execute the code to generate the image instantly in the chat.
 - **Data Viewer:** See a robust, interactive grid view of the dataset you are currently querying.
