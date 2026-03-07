@@ -1,0 +1,469 @@
+"""
+gemini_service.py — Google Gemini API integration for Data Talk.
+
+Uses the new `google-genai` SDK (replaces deprecated `google-generativeai`).
+Handles sending data context + user questions to Gemini and parsing
+structured responses that include natural language + Plotly chart JSON.
+"""
+
+import os
+import json
+import re
+from google import genai
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Create Gemini client (auto-picks up GEMINI_API_KEY env var)
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Model to use
+MODEL_ID = "gemini-3.1-flash-lite-preview"
+
+
+SYSTEM_PROMPT = """You are DATA TALK AI — an expert data analyst assistant.
+You help users analyze their datasets by perform data processing and answering questions clearly and generating interactive charts.
+
+RULES:
+1. Answer the user's question clearly and concisely in natural language.
+2. If the question would benefit from a chart/visualization, generate a Plotly chart specification.
+3. If the question involves specific data values, comparisons, or breakdowns, also return a summary table.
+4. If a chart is generated, also provide 2-4 key statistical highlights.
+5. ALWAYS format your response as valid JSON with this exact structure:
+{
+  "text": "Your natural language answer here. Use markdown formatting for readability.",
+  "chart": null or { plotly chart object },
+  "table": null or { "headers": ["Col1", "Col2"], "rows": [["val1", "val2"], ...] },
+  "stats": null or [{ "label": "Total", "value": "1,234" }, { "label": "Average", "value": "56.7" }],
+  "followup": ["Follow-up question 1", "Follow-up question 2"]
+}
+
+TABLE RULES (when table is not null):
+- Return table data when the user asks for breakdowns, comparisons, rankings, or detail views.
+- "headers" is an array of column header strings.
+- "rows" is an array of arrays, each inner array being one row of values.
+- If you return a chart, also return the underlying data as a table so users can see exact values.
+
+STATS RULES (when stats is not null):
+- Provide 2-4 key statistical insights related to the chart or analysis.
+- Each stat is { "label": "...", "value": "..." }
+- Good stats: totals, averages, min/max, percentages, counts.
+- Format values for readability (e.g., "$1,234.56", "42.3%", "1,500 rows").
+
+CHART RULES (when chart is not null):
+- The "chart" value must be a valid Plotly JSON object with "data" and "layout" keys.
+- "data" is an array of trace objects (e.g. [{"type": "bar", "x": [...], "y": [...], "name": "..."}])
+- "layout" should include: "title", appropriate axis labels, and a clean modern style.
+- Use these colors for consistency: ["#4285f4", "#ea4335", "#fbbc05", "#34a853", "#ff6d01", "#46bdc6", "#7b1fa2", "#c2185b"]
+- Set layout.template to "plotly_white" for a clean look.
+- Set layout.font.family to "Inter, sans-serif".
+- Make charts responsive: layout.autosize = true.
+- For pie/donut charts, use "hole": 0.4 for donut style.
+- IMPORTANT: All data values in the chart must come from the actual dataset provided. Never fabricate data.
+
+If the user's question doesn't need a chart, set "chart" to null.
+If no table is relevant, set "table" to null.
+If no stats are relevant, set "stats" to null.
+
+FOLLOWUP RULES:
+- ALWAYS provide exactly 2-3 follow-up questions the user might ask next.
+- Make them contextual to the current analysis and dataset.
+- Keep each question short (under 8 words). Add an emoji at the start.
+- Example: ["📈 Show the monthly trend", "🔍 Which category has the highest value?", "📊 Compare top 5 items"]
+
+If the data doesn't contain the information needed, explain what's missing.
+
+IMPORTANT: Return ONLY the JSON object. No markdown code fences, no extra text before or after."""
+
+
+CODE_GEN_PROMPT = """You are DATA TALK AI — an expert data analyst assistant.
+You write Python/Pandas code to analyze datasets.
+
+The user has uploaded a dataset loaded as a pandas DataFrame named `df`.
+You will be given the dataset SCHEMA (column names, types, value distributions) but NOT the raw data.
+Your job is to write Python code that analyzes `df` and produces a `result` dict.
+
+RULES:
+1. Write valid Python code using pandas (imported as `pd`) and numpy (imported as `np`).
+2. The variable `df` is ALREADY defined as a pandas DataFrame with the FULL dataset.
+3. DO NOT try to recreate or hardcode `df`. DO NOT write any data literals. DO NOT include the sample rows in your code.
+4. Write ONLY the analysis logic using `df`.
+5. Your code MUST create a variable called `result` — a dict with this structure:
+
+result = {
+    "text": "Your natural language answer here. Use markdown formatting.",
+    "chart": None or { "data": [...plotly traces...], "layout": {...} },
+    "table": None or a pandas DataFrame (will be auto-converted),
+    "stats": None or [{"label": "Total", "value": "1,234"}, ...],
+    "followup": ["Follow-up question 1", "Follow-up question 2"]
+}
+
+4. For charts, use Plotly JSON format with "data" and "layout" keys.
+   - Use colors: ["#4285f4", "#ea4335", "#fbbc05", "#34a853", "#ff6d01", "#46bdc6", "#7b1fa2", "#c2185b"]
+   - Set layout.template to "plotly_white"
+   - Set layout.font.family to "Inter, sans-serif"
+   - Set layout.autosize = True
+   - For pie/donut charts, use "hole": 0.4
+5. For tables, you can assign a pandas DataFrame directly — it will be converted automatically.
+   Or use {"headers": [...], "rows": [[...], ...]} format.
+6. For stats, provide 2-4 key statistics with formatted values (e.g. "$1,234", "42.3%").
+7. Always provide 2-3 follow-up questions with an emoji prefix (under 8 words each).
+8. Use .tolist() when putting pandas Series or numpy arrays into chart data.
+9. Handle potential errors gracefully (e.g. missing columns, type mismatches).
+10. SAFETY: ALWAYS check if a DataFrame or result is empty before accessing `.iloc[0]`, `.head(1)`, etc.
+11. Do NOT use print() — assign everything to the `result` variable.
+12. Do NOT import any modules — `pd`, `np`, and `json` are pre-imported.
+13. Your code must be short and efficient. DO NOT hardcode data values.
+
+IMPORTANT: Return ONLY the Python code. No markdown code fences, no extra text."""
+
+
+def analyze_data(question, data_context, chat_history=None):
+    """
+    Send a question + data context to Gemini and get back a structured response.
+
+    Args:
+        question: The user's question string
+        data_context: A text summary of the dataset (from data_service.get_context_string)
+        chat_history: Optional list of previous messages [{"role": "user"/"model", "text": "..."}]
+
+    Returns:
+        dict with keys: "text" (str), "chart" (dict or None)
+    """
+    # Build the full prompt
+    prompt_parts = []
+
+    # System instruction with data context
+    prompt_parts.append(SYSTEM_PROMPT)
+    prompt_parts.append(f"\n\nHere is the dataset the user uploaded:\n\n{data_context}")
+
+    # Chat history context (if any)
+    if chat_history:
+        prompt_parts.append("\n\nPrevious conversation:")
+        for msg in chat_history[-6:]:  # Last 6 messages for context
+            role = "User" if msg["role"] == "user" else "Assistant"
+            prompt_parts.append(f"{role}: {msg['text']}")
+
+    # Current question
+    prompt_parts.append(f"\n\nUser's current question: {question}")
+
+    full_prompt = "\n".join(prompt_parts)
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=full_prompt,
+        )
+        usage = response.usage_metadata
+        usage_dict = {
+            "input_tokens": usage.prompt_token_count,
+            "output_tokens": usage.candidates_token_count,
+            "total_tokens": usage.total_token_count
+        }
+        result = _parse_response(response.text)
+        result["usage"] = usage_dict
+        return result
+    except Exception as e:
+        return {
+            "error": True,
+            "text": f"Sorry, I encountered an error while analyzing your data: {str(e)}",
+            "chart": None,
+            "usage": None
+        }
+
+
+# ==============================================================
+# Extraction Prompt (Step 1 of multi-step pipeline)
+# ==============================================================
+
+EXTRACTION_PROMPT = """You are DATA TALK AI — a data parsing assistant.
+Your job is to write short Python/Pandas code to extract the unique values and their frequencies
+for TEXTUAL and CATEGORICAL columns that are relevant to the user's question.
+
+CRITICAL RULES:
+1. Identify which categorical/text columns are relevant to the user's question based on the SCHEMA.
+2. For each relevant column, calculate the value counts (frequencies).
+3. SAFETY CAP: For ANY column, return AT MOST the top 500 most frequent values.
+   If there are more than 500 unique values, sum the rest into a key called "Other".
+4. Your code MUST assign a Python dictionary to the `result` variable.
+   Format: {"ColumnName": {"value1": count1, "value2": count2, "Other": remaining}, ...}
+5. The `df` DataFrame is already loaded. `pd` and `np` are pre-imported.
+6. Do NOT use print(). Do NOT import anything.
+
+Return ONLY the Python code. No markdown fences."""
+
+
+def _call_llm_for_code(full_prompt):
+    """Internal helper: call Gemini and clean up the response as Python code."""
+    try:
+        response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=full_prompt,
+        )
+        code = response.text.strip()
+        usage = response.usage_metadata
+        usage_dict = {
+            "input_tokens": usage.prompt_token_count,
+            "output_tokens": usage.candidates_token_count,
+            "total_tokens": usage.total_token_count
+        }
+
+        # Remove markdown code fences if present
+        if code.startswith("```"):
+            lines = code.split("\n")
+            if lines[-1].strip() == "```":
+                lines = lines[1:-1]
+            else:
+                lines = lines[1:]
+            code = "\n".join(lines)
+
+        return code, usage_dict
+    except Exception as e:
+        print(f"[Code Gen Error] {e}")
+        return None, None
+
+
+def generate_data_extraction_code(question, schema_context):
+    """
+    Step 1: Generate code to extract unique values from relevant columns.
+    """
+    prompt_parts = []
+    prompt_parts.append(EXTRACTION_PROMPT)
+    prompt_parts.append(f"\n\nDataset Schema:\n{schema_context}")
+    prompt_parts.append(f"\n\nUser's question: {question}")
+    prompt_parts.append("\nWrite Python code that creates the `result` dictionary:")
+
+    full_prompt = "\n".join(prompt_parts)
+    return _call_llm_for_code(full_prompt)
+
+
+def generate_analysis_code(question, schema_context, chat_history=None, profile_context=None, extracted_data_context=None):
+    """
+    Step 2: Generate analysis code using schema + extracted unique values.
+    """
+    prompt_parts = []
+    prompt_parts.append(CODE_GEN_PROMPT)
+    prompt_parts.append(f"\n\nDataset Schema:\n{schema_context}")
+
+    if extracted_data_context:
+        prompt_parts.append(f"\n\nExtracted Unique Values (from relevant columns):\n{extracted_data_context}")
+
+    if profile_context:
+        prompt_parts.append(f"\n\nData Profile:\n{profile_context}")
+
+    if chat_history:
+        prompt_parts.append("\n\nPrevious conversation:")
+        for msg in chat_history[-6:]:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            prompt_parts.append(f"{role}: {msg['text']}")
+
+    prompt_parts.append(f"\n\nUser's question: {question}")
+    prompt_parts.append("\nWrite Python code to answer this question using the `df` DataFrame:")
+
+    full_prompt = "\n".join(prompt_parts)
+    return _call_llm_for_code(full_prompt)
+
+
+def retry_analysis_code(question, schema_context, failed_code, error_message, profile_context=None, extracted_data_context=None):
+    """
+    Retry code generation after a failure. Sends the error back to Gemini to fix.
+    """
+    prompt_parts = []
+    prompt_parts.append(CODE_GEN_PROMPT)
+    prompt_parts.append(f"\n\nDataset Schema:\n{schema_context}")
+
+    if extracted_data_context:
+        prompt_parts.append(f"\n\nExtracted Unique Values:\n{extracted_data_context}")
+
+    if profile_context:
+        prompt_parts.append(f"\n\nData Profile:\n{profile_context}")
+
+    prompt_parts.append(f"\n\nUser's question: {question}")
+    prompt_parts.append(f"\n\nI previously generated this code, but it FAILED:")
+    prompt_parts.append(f"```python\n{failed_code}\n```")
+    prompt_parts.append(f"\nError: {error_message}")
+    prompt_parts.append("\nPlease fix the code. Return ONLY the fixed Python code.")
+
+    full_prompt = "\n".join(prompt_parts)
+    return _call_llm_for_code(full_prompt)
+
+
+
+def interpret_results(question, schema_context, code_result, chat_history=None):
+    """
+    Second step of the round trip: send computed results back to Gemini
+    for intelligent interpretation and explanation.
+
+    Args:
+        question: The user's original question
+        schema_context: Schema description of the dataset
+        code_result: The result dict from code execution (text, chart, table, stats)
+        chat_history: Optional previous messages
+
+    Returns:
+        str: Enhanced natural language explanation, or None if it fails
+    """
+    # Build a compact summary of what the code computed
+    result_summary_parts = []
+
+    if code_result.get("text"):
+        result_summary_parts.append(f"Code output text: {code_result['text']}")
+
+    if code_result.get("stats"):
+        stats_str = ", ".join([f"{s['label']}: {s['value']}" for s in code_result["stats"]])
+        result_summary_parts.append(f"Key statistics: {stats_str}")
+
+    if code_result.get("table"):
+        table = code_result["table"]
+        if isinstance(table, dict) and "headers" in table:
+            # Include first few rows to give context
+            headers = table["headers"]
+            rows = table.get("rows", [])[:10]  # Max 10 rows
+            table_str = " | ".join(headers) + "\n"
+            for row in rows:
+                table_str += " | ".join(str(v) for v in row) + "\n"
+            result_summary_parts.append(f"Computed table:\n{table_str}")
+
+    if code_result.get("chart"):
+        chart = code_result["chart"]
+        chart_type = "unknown"
+        if "data" in chart and len(chart["data"]) > 0:
+            chart_type = chart["data"][0].get("type", "unknown")
+        chart_title = ""
+        if "layout" in chart:
+            title = chart["layout"].get("title", "")
+            if isinstance(title, dict):
+                chart_title = title.get("text", "")
+            else:
+                chart_title = str(title)
+        result_summary_parts.append(f"Chart generated: {chart_type} chart titled '{chart_title}'")
+
+    result_summary = "\n".join(result_summary_parts)
+
+    prompt = f"""You are DATA TALK AI — an expert data analyst.
+
+The user asked: "{question}"
+
+Dataset schema:
+{schema_context}
+
+Python code was executed on the FULL dataset and produced these results:
+{result_summary}
+
+Based on these ACTUAL computed results, provide a clear, insightful explanation.
+- Explain what the numbers mean in plain language
+- Highlight any notable patterns, outliers, or trends
+- If relevant, suggest possible reasons or factors behind the findings
+- Use markdown formatting for readability
+- Keep it concise (2-4 paragraphs max)
+
+Return ONLY the explanation text, no JSON, no code fences."""
+
+    # Add chat history for context
+    if chat_history:
+        history_str = "\n".join([
+            f"{'User' if m['role'] == 'user' else 'AI'}: {m['text']}"
+            for m in chat_history[-4:]
+        ])
+        prompt += f"\n\nRecent conversation:\n{history_str}"
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=prompt,
+        )
+        usage = response.usage_metadata
+        return response.text.strip(), {
+            "input_tokens": usage.prompt_token_count,
+            "output_tokens": usage.candidates_token_count,
+            "total_tokens": usage.total_token_count
+        }
+    except Exception as e:
+        print(f"[Interpret Error] {e}")
+        return None, None
+
+
+def _parse_response(response_text):
+    """
+    Parse Gemini's response into structured text + chart JSON.
+    Handles cases where Gemini wraps JSON in code fences or returns plain text.
+    """
+    text = response_text.strip()
+
+    # Remove markdown code fences if present (```json ... ``` or ``` ... ```)
+    text = re.sub(r'^```(?:json)?\s*\n?', '', text)
+    text = re.sub(r'\n?```\s*$', '', text)
+    text = text.strip()
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict) and "text" in parsed:
+            return {
+                "text": parsed.get("text", ""),
+                "chart": parsed.get("chart", None),
+                "table": parsed.get("table", None),
+                "stats": parsed.get("stats", None),
+                "followup": parsed.get("followup", [])
+            }
+    except json.JSONDecodeError:
+        pass
+
+    # If JSON parsing failed, try to extract JSON from the text
+    json_match = re.search(r'\{[\s\S]*"text"\s*:[\s\S]*\}', text)
+    if json_match:
+        try:
+            parsed = json.loads(json_match.group())
+            return {
+                "text": parsed.get("text", ""),
+                "chart": parsed.get("chart", None),
+                "table": parsed.get("table", None),
+                "stats": parsed.get("stats", None),
+                "followup": parsed.get("followup", [])
+            }
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: treat entire response as plain text
+    return {
+        "text": response_text.strip(),
+        "chart": None,
+        "table": None,
+        "stats": None,
+        "followup": []
+    }
+
+
+def get_quick_summary(data_context):
+    """
+    Ask Gemini for a quick summary of the dataset (used after file upload).
+    """
+    prompt = f"""{SYSTEM_PROMPT}
+
+Here is the dataset:
+
+{data_context}
+
+Provide a brief 2-3 sentence summary of this dataset. What kind of data is it?
+What are the most interesting columns? How many records are there?
+Return as JSON with "text" key and "chart" set to null."""
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=prompt,
+        )
+        usage = response.usage_metadata
+        result = _parse_response(response.text)
+        result["usage"] = {
+            "input_tokens": usage.prompt_token_count,
+            "output_tokens": usage.candidates_token_count,
+            "total_tokens": usage.total_token_count
+        }
+        return result
+    except Exception as e:
+        return {
+            "error": True,
+            "text": f"Dataset loaded successfully. Error generating summary: {str(e)}",
+            "chart": None,
+            "usage": None
+        }

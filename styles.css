@@ -1,0 +1,521 @@
+:root {
+    --primary-color: #4285f4;
+    /* Google Blue */
+    --accent-color: #ea4335;
+    /* Google Red type accent if needed, or stick to blue/white */
+    --text-color: #202124;
+    /* Dark Grey/Black */
+    --text-light: #5f6368;
+    --background: #ffffff;
+    /* White */
+    --white: #ffffff;
+    --border-color: #dadce0;
+    --font-family: 'Google Sans', 'Inter', sans-serif;
+    /* Prioritize Google Sans if available */
+    --container-width: 90%;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-family);
+    color: var(--text-color);
+    background-color: var(--background);
+    /* Remove gradient, use solid dark background for particles */
+    background: var(--background);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    /* Prevent scrollbars from particles */
+}
+
+#particle-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    /* Behind content */
+    pointer-events: none;
+    /* Let clicks pass through */
+}
+
+/* Dashboard Subtle Background */
+.dashboard-bg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: -1;
+    overflow: hidden;
+    background: white;
+}
+
+.bg-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.4;
+    animation: floatBlob 25s infinite alternate cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.blob-1 {
+    top: -10%;
+    left: -10%;
+    width: 50vw;
+    height: 50vw;
+    background: radial-gradient(circle, rgba(66, 133, 244, 0.2) 0%, rgba(66, 133, 244, 0) 70%);
+    /* Blue */
+}
+
+.blob-2 {
+    bottom: -10%;
+    right: -10%;
+    width: 50vw;
+    height: 50vw;
+    background: radial-gradient(circle, rgba(234, 67, 53, 0.15) 0%, rgba(234, 67, 53, 0) 70%);
+    /* Red */
+    animation-delay: -12s;
+}
+
+.blob-3 {
+    top: 40%;
+    left: 40%;
+    width: 40vw;
+    height: 40vw;
+    background: radial-gradient(circle, rgba(251, 188, 5, 0.1) 0%, rgba(251, 188, 5, 0) 70%);
+    /* Yellow */
+    animation-duration: 40s;
+    opacity: 0.3;
+}
+
+@keyframes floatBlob {
+    0% {
+        transform: translate(0, 0) scale(1);
+    }
+
+    33% {
+        transform: translate(30px, -50px) scale(1.1);
+    }
+
+    66% {
+        transform: translate(-20px, 20px) scale(0.9);
+    }
+
+    100% {
+        transform: translate(0, 0) scale(1);
+    }
+}
+
+.container {
+    width: 100%;
+    /* Fluid width */
+    max-width: var(--container-width);
+    margin: 0 auto;
+    padding: 0 40px;
+    /* Increased padding */
+    display: flex;
+    align-items: center;
+}
+
+/* Header */
+.site-header {
+    width: 100%;
+    z-index: 10;
+    padding: 20px 0;
+    padding-top: 30px;
+}
+
+.site-header .container {
+    justify-content: space-between;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    font-weight: 700;
+    font-size: 1.25rem;
+    color: var(--text-color);
+    text-decoration: none;
+    gap: 10px;
+}
+
+.logo-icon {
+    width: 32px;
+    height: 32px;
+    background: conic-gradient(from 0deg, #f87171 0deg 120deg, #60a5fa 120deg 240deg, #34d399 240deg 360deg);
+    border-radius: 50%;
+    position: relative;
+    transform: rotate(-15deg);
+}
+
+.logo-icon::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 12px;
+    height: 12px;
+    background: white;
+    border-radius: 50%;
+    z-index: 2;
+}
+
+/* Add a line to simulate the cut */
+.logo-icon::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 2px;
+    background: white;
+    transform: translateY(-50%) rotate(30deg);
+    transform-origin: left center;
+}
+
+
+.main-nav ul {
+    display: flex;
+    list-style: none;
+    gap: 30px;
+}
+
+.main-nav a {
+    text-decoration: none;
+    color: var(--text-light);
+    font-weight: 500;
+    font-size: 0.95rem;
+    transition: color 0.2s;
+}
+
+.main-nav a:hover {
+    color: var(--primary-color);
+    /* Blue on hover */
+}
+
+.header-actions {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 24px;
+    border-radius: 6px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.2s;
+    font-size: 0.95rem;
+}
+
+.btn-outline {
+    border: 1px solid rgba(32, 33, 36, 0.3);
+    /* Dark border */
+    color: var(--text-color);
+    backdrop-filter: blur(10px);
+    /* Glassmorphism */
+}
+
+.btn-outline:hover {
+    background-color: rgba(32, 33, 36, 0.05);
+    border-color: var(--text-color);
+    color: var(--text-color);
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: var(--white);
+    border: 1px solid var(--primary-color);
+    box-shadow: 0 4px 6px -1px rgba(66, 133, 244, 0.3);
+}
+
+.btn-primary:hover {
+    background-color: #4351d6;
+    border-color: #4351d6;
+    transform: translateY(-1px);
+}
+
+.btn-lg {
+    padding: 14px 32px;
+    font-size: 1.1rem;
+}
+
+.mobile-menu-btn {
+    display: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mobile-menu-btn span {
+    display: block;
+    width: 25px;
+    height: 3px;
+    background-color: var(--text-color);
+    border-radius: 3px;
+}
+
+/* Hero Section */
+main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.hero-section {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.hero-section .container {
+    padding-top: 40px;
+    padding-bottom: 60px;
+    justify-content: space-between;
+    align-items: center;
+    gap: 80px;
+    width: 100%;
+}
+
+.hero-content {
+    max-width: 50%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    /* Prevent button from stretching */
+}
+
+.hero-content h1 {
+    font-size: 4.5rem;
+    font-weight: 800;
+    line-height: 1.1;
+    margin-bottom: 30px;
+    letter-spacing: -0.02em;
+}
+
+.hero-subhead {
+    font-size: 1.25rem;
+    color: var(--text-light);
+    margin-bottom: 40px;
+    font-weight: 400;
+}
+
+.hero-footnote {
+    margin-top: 20px;
+    color: var(--text-light);
+    font-size: 0.9rem;
+}
+
+.hero-image {
+    max-width: 45%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.hero-image img {
+    max-width: 100%;
+    height: auto;
+    filter: drop-shadow(0 20px 25px -5px rgba(0, 0, 0, 0.1));
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .site-header {
+        position: relative;
+    }
+
+    .main-nav,
+    .header-actions {
+        display: none;
+    }
+
+    .mobile-menu-btn {
+        display: flex;
+    }
+
+    .hero-section .container {
+        flex-direction: column;
+        padding-top: 40px;
+        text-align: center;
+    }
+
+    .hero-content {
+        max-width: 100%;
+        margin-bottom: 50px;
+    }
+
+    .hero-content h1 {
+        font-size: 3rem;
+    }
+
+    .hero-image {
+        max-width: 80%;
+    }
+}
+
+/* Button Text Color Fix */
+.btn-outline,
+.btn-primary {
+    color: var(--white);
+    /* Ensure visible text on buttons */
+}
+
+.btn-outline {
+    color: var(--text-color);
+    /* Dark text for outline in light mode */
+}
+
+/* Chat Hero UI */
+.chat-hero-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    width: 100%;
+    max-width: 800px;
+    /* Constrain width for readability */
+    margin: 0 auto;
+    padding-bottom: 10vh;
+    /* Visual balance */
+}
+
+.chat-hero-title {
+    font-size: 2.5rem;
+    font-weight: 600;
+    margin-bottom: 2rem;
+    text-align: center;
+    background: linear-gradient(135deg, var(--text-color) 0%, var(--text-light) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.02em;
+}
+
+.chat-input-wrapper {
+    width: 100%;
+    position: relative;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(20px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    /* Soft shadow */
+    border: 1px solid var(--border-color);
+    padding: 10px;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.chat-input-wrapper:focus-within {
+    box-shadow: 0 8px 30px rgba(66, 133, 244, 0.15);
+    border-color: var(--primary-color);
+    transform: translateY(-2px);
+}
+
+.chat-hero-input {
+    width: 100%;
+    min-height: 60px;
+    border: none;
+    background: transparent;
+    padding: 15px 50px 15px 20px;
+    /* Space for buttons */
+    font-size: 1.1rem;
+    font-family: var(--font-family);
+    color: var(--text-color);
+    resize: none;
+    outline: none;
+}
+
+.chat-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 10px 5px 10px;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    margin-top: 5px;
+}
+
+.chat-tools {
+    display: flex;
+    gap: 10px;
+}
+
+.tool-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    color: var(--text-light);
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tool-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--primary-color);
+}
+
+.send-btn {
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s;
+}
+
+.send-btn:hover {
+    transform: scale(1.05);
+}
+
+.suggestions-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.suggestion-chip {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    font-size: 0.9rem;
+    color: var(--text-light);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.suggestion-chip:hover {
+    background: white;
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
