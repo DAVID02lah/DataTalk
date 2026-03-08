@@ -17,8 +17,8 @@ load_dotenv()
 # Create Gemini client (auto-picks up GEMINI_API_KEY env var)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Model to use
-MODEL_ID = "gemini-3.1-flash-lite-preview"
+# Model to use (override via GEMINI_MODEL_ID env var)
+MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.1-flash-lite-preview")
 
 
 SYSTEM_PROMPT = """You are DATA TALK AI — an expert data analyst assistant.
@@ -114,6 +114,7 @@ result = {
 11. Do NOT use print() — assign everything to the `result` variable.
 12. Do NOT import any modules — `pd`, `np`, and `json` are pre-imported.
 13. Your code must be short and efficient. DO NOT hardcode data values.
+14. PERFORMANCE (CRITICAL): Use fast, vectorized pandas operations. NEVER use `.iterrows()`, `.apply()`, or manual Python `for` loops to iterate over rows. Always use native pandas/numpy aggregation, filtering, and joining capabilities.
 
 IMPORTANT: Return ONLY the Python code. No markdown code fences, no extra text."""
 

@@ -37,3 +37,18 @@ class AppState:
         self.chat_histories: dict[str, list[dict[str, object]]] = {}
         self.active_file: dict[str, str | None] = {"filename": None}
         self.query_cache = QueryCache(max_items=300)
+        self._file_cache: dict[str, dict] = {}  # filename -> cached computations
+
+    def get_cached(self, filename, key):
+        """Get a cached computation for a file, or None."""
+        return self._file_cache.get(filename, {}).get(key)
+
+    def set_cached(self, filename, key, value):
+        """Cache a computation result for a file."""
+        if filename not in self._file_cache:
+            self._file_cache[filename] = {}
+        self._file_cache[filename][key] = value
+
+    def clear_file_cache(self):
+        """Invalidate all cached file computations."""
+        self._file_cache.clear()

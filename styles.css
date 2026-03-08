@@ -379,6 +379,19 @@ main {
     /* Ensure visible text on buttons */
 }
 
+/* Shared interactive-element base (prevents duplication across CSS modules) */
+.chart-action-btn,
+.btn-dash-action,
+.table-toggle-btn,
+.regenerate-btn,
+.followup-chip,
+.card-resize-btn,
+.data-preview-toggle {
+    font-family: var(--font-family);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
 .btn-outline {
     color: var(--text-color);
     /* Dark text for outline in light mode */

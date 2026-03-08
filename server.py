@@ -53,10 +53,13 @@ ALLOWED_STATIC_FILES = {
     "dashboard.html",
     "login.html",
     "styles.css",
+    "dashboard.css",
     "script.js",
 }
 ALLOWED_STATIC_PREFIXES = (
     "assets/",
+    "js/",
+    "css/",
 )
 
 
@@ -160,6 +163,7 @@ def upload_file():
         # Reset chat history and query cache for new file
         state.chat_histories.clear()
         state.query_cache.clear()
+        state.clear_file_cache()
 
         _log_event("file_uploaded", filename=filename, rows=summary["shape"]["rows"], cols=summary["shape"]["columns"])
 
@@ -334,12 +338,16 @@ def chat():
         session_id = "default"  # Simple single-session approach
         history = state.chat_histories.get(session_id, [])
 
-        # === Build context ===
-        # Phase 0.5 uses a LEAN schema (just metadata + tiny sample) to save tokens
-        schema_context_lean = data_service.get_schema_string(df, max_tokens=2000)
+        # === Build context (cached per file) ===
+        schema_context_lean = state.get_cached(filename, "schema_lean")
+        if schema_context_lean is None:
+            schema_context_lean = data_service.get_schema_string(df, max_tokens=2000)
+            state.set_cached(filename, "schema_lean", schema_context_lean)
 
-        # Generate data profile for domain-aware analysis
-        profile = data_service.get_data_profile(df)
+        profile = state.get_cached(filename, "profile")
+        if profile is None:
+            profile = data_service.get_data_profile(df)
+            state.set_cached(filename, "profile", profile)
         profile_context = data_service.get_profile_string(profile)
         _log_event("profile_detected", dataset_type=profile["dataset_type"])
 
@@ -362,8 +370,10 @@ def chat():
         # === Phase 1: Code Execution Pipeline with Retry ===
         MAX_RETRIES = 2
         result = None
-        # Phase 1 uses a standard schema (more CSV packing if budget allows)
-        schema_context_full = data_service.get_schema_string(df, max_tokens=15000)
+        schema_context_full = state.get_cached(filename, "schema_full")
+        if schema_context_full is None:
+            schema_context_full = data_service.get_schema_string(df, max_tokens=15000)
+            state.set_cached(filename, "schema_full", schema_context_full)
 
         # Initial code generation (with extracted data context)
         # We cap history to prevent cumulative token bloat
@@ -477,6 +487,7 @@ def clear_chat():
     """Clear chat history (memory + file) and reset active file."""
     state.chat_histories.clear()
     state.active_file["filename"] = None  # Reset active file
+    state.clear_file_cache()
     try:
         if os.path.exists(CHAT_HISTORY_PATH):
             os.remove(CHAT_HISTORY_PATH)

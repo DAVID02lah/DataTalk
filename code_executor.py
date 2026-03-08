@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 
-EXEC_TIMEOUT = 10
+EXEC_TIMEOUT = 60
 MAX_CODE_LENGTH = 10000
 
 BLOCKED_BUILTINS = {

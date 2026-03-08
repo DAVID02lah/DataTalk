@@ -1,0 +1,6 @@
+/* Dashboard stylesheet manifest. Keep import order stable. */
+@import url("css/dashboard-layout.css");
+@import url("css/dashboard-chat.css");
+@import url("css/dashboard-grid.css");
+@import url("css/dashboard-overlays.css");
+

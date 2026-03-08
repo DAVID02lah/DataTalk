@@ -1,0 +1,74 @@
+# Data Talk — Project Analysis
+
+## Architecture Overview
+
+```mermaid
+graph LR
+    A[Browser<br>HTML/JS/CSS] -->|REST API| B[Flask Server<br>server.py]
+    B --> C[Gemini Service<br>gemini_service.py]
+    B --> D[Data Service<br>data_service.py]
+    B --> E[Code Executor<br>code_executor.py]
+    C -->|API| F[Google Gemini]
+    E -->|Subprocess| G[Sandboxed Python]
+```
+
+A vanilla HTML/JS frontend talks to a Flask backend (Python). The backend orchestrates a multi-phase AI pipeline: extract → generate code → execute in sandbox → interpret results.
+
+---
+
+## Strengths
+
+| Area | Details |
+|---|---|
+| **Smart pipeline** | The 3-phase approach (extraction → code gen → interpretation) is well-designed. It sends lean schema to save tokens, generates executable Python, and then has Gemini interpret computed results — much better than asking the LLM to analyze raw data directly. |
+| **Security** | `code_executor.py` has solid sandboxing: AST validation, blocked builtins/imports, subprocess isolation, and a 10s timeout. Good defense-in-depth. |
+| **Data profiling** | `data_service.py` auto-detects dataset types (survey, time series, transactional) and generates domain-specific analysis suggestions — improves LLM output quality significantly. |
+| **Token efficiency** | Schema context is dynamically sized (`max_tokens` budget), correlations are computed locally, and only metadata is sent to the LLM instead of raw data. |
+| **UX polish** | Progress phases during AI processing, follow-up suggestions, chart annotations, drag-and-drop dashboard — good attention to user experience. |
+| **Retry logic** | Code execution has 2 retry attempts with error feedback to Gemini, plus a text-only fallback — graceful degradation. |
+
+---
+
+## Weaknesses
+
+| Area | Details |
+|---|---|
+| **No authentication** | `login.html` is purely cosmetic — any email/password logs you in. No sessions, tokens, or user management. |
+| **Single-user only** | `AppState` is a global singleton. Multiple users would share chat history, active file, and query cache. |
+| **No persistent storage** | Everything is in-memory (chat history saved as flat JSON). Server restart loses cache. No database. |
+| **Large monolithic files** | `script.js` (1,350+ lines) and `dashboard.html` (1,470+ lines with inline CSS) are hard to maintain. |
+| **No tests** | Zero test coverage. The sandbox, data parsing, and API endpoints are all untested. |
+| **No error boundaries** | Frontend `fetch` calls have basic try/catch but no retry, no offline detection, no request timeout. |
+| **File management** | Uploaded files accumulate forever in `/uploads`. No cleanup, no size quotas, no per-user isolation. |
+| **Hardcoded config** | `API_BASE = "http://localhost:5000"` is hardcoded in JS. Won't work in any deployment scenario. |
+
+---
+
+## Suggested Improvements
+
+### High Priority (Functionality)
+
+1. **Real authentication** — Add Flask-Login or JWT-based auth. The login page already exists, just needs a real backend.
+2. **Multi-file support** — Allow users to switch between uploaded files without re-uploading. Add a file picker to the Data Connector.
+3. **File cleanup** — Auto-delete files older than N days, or add a delete button per file.
+4. **Request timeout on frontend** — Add `AbortController` with a 60s timeout to prevent hung requests.
+
+### Medium Priority (Code Quality)
+
+5. **Split `script.js`** — Break into modules: `chat.js`, `dashboard.js`, `upload.js`, `particles.js`.
+6. **Extract inline CSS from `dashboard.html`** — Move the ~930 lines of `<style>` into `styles.css` or a dedicated `dashboard.css`.
+7. **Make `API_BASE` configurable** — Read from a `<meta>` tag or `/api/config` endpoint so deployment works.
+8. **Add tests** — At minimum: `data_service` (parsing, profiling), `code_executor` (sandbox security), and API endpoint tests.
+
+### Low Priority (Nice to Have)
+
+9. **Export chat** — Allow exporting the full chat conversation as PDF or Markdown.
+10. **Dark mode** — The CSS variable system is already in place (`--text-color`, etc.), making this straightforward.
+11. **Streaming responses** — Use SSE or WebSocket to stream AI responses token-by-token instead of waiting for the full response.
+12. **Rate limiting** — Add Flask-Limiter to prevent API abuse.
+
+---
+
+## Verdict
+
+Data Talk is a **well-architected prototype** with a clever AI pipeline and good UX. The main gaps are around production-readiness: auth, multi-tenancy, persistence, and testing. The codebase is clean and readable but would benefit from modularization as it grows.
