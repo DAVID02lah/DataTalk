@@ -221,7 +221,7 @@ def _call_llm_for_code(full_prompt):
         return code, usage_dict
     except Exception as e:
         print(f"[Code Gen Error] {e}")
-        return None, None
+        raise RuntimeError(f"Failed to generate code: {e}")
 
 
 def generate_data_extraction_code(question, schema_context):
@@ -381,7 +381,7 @@ Return ONLY the explanation text, no JSON, no code fences."""
         }
     except Exception as e:
         print(f"[Interpret Error] {e}")
-        return None, None
+        raise RuntimeError(f"Failed to interpret results: {e}")
 
 
 def _parse_response(response_text):

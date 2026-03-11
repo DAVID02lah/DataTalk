@@ -368,7 +368,7 @@ def chat():
             _log_event("extraction_warning", error=str(e))
 
         # === Phase 1: Code Execution Pipeline with Retry ===
-        MAX_RETRIES = 2
+        MAX_RETRIES = app_config.MAX_RETRIES
         result = None
         schema_context_full = state.get_cached(filename, "schema_full")
         if schema_context_full is None:
@@ -377,7 +377,7 @@ def chat():
 
         # Initial code generation (with extracted data context)
         # We cap history to prevent cumulative token bloat
-        history_capped = history[-5:] if history else []
+        history_capped = history[-app_config.CHAT_HISTORY_CAP:] if history else []
         generated_code, usage = gemini_service.generate_analysis_code(
             message, schema_context_full, history_capped, profile_context, extracted_data_context
         )

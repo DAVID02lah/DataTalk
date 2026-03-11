@@ -1,4 +1,13 @@
 /* Dashboard Specific Styles */
+/* Override Handsontable's runtime color-scheme so app theme controls it. */
+:root {
+    --ht-color-scheme: light;
+}
+
+:where(.ht-theme-main) {
+    color-scheme: var(--ht-color-scheme) !important;
+}
+
 body {
     overflow: hidden;
 }
@@ -38,6 +47,7 @@ body {
     margin-bottom: 4px;
     cursor: pointer;
     font-weight: 500;
+    border-left: 4px solid transparent;
 }
 
 .nav-item:hover {
@@ -48,6 +58,7 @@ body {
 .nav-item.active {
     background: rgba(66, 133, 244, 0.1);
     color: var(--primary-color);
+    border-left-color: var(--primary-color);
 }
 
 .nav-icon {

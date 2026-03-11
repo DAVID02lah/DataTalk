@@ -121,13 +121,22 @@ function initParticles() {
 }
 
 function connectParticles() {
+    const maxDistanceSq = (canvas.width / 7) * (canvas.height / 7);
+    const maxDist = Math.sqrt(maxDistanceSq);
+
     for (let a = 0; a < particlesArray.length; a++) {
-        for (let b = a; b < particlesArray.length; b++) {
-            let distance =
-                (particlesArray[a].x - particlesArray[b].x) ** 2 +
-                (particlesArray[a].y - particlesArray[b].y) ** 2;
-            if (distance < (canvas.width / 7) * (canvas.height / 7)) {
-                let opacity = 1 - distance / 20000;
+        for (let b = a + 1; b < particlesArray.length; b++) {
+            // Early exit using 1D bounding box
+            let dx = particlesArray[a].x - particlesArray[b].x;
+            if (Math.abs(dx) > maxDist) continue;
+            
+            let dy = particlesArray[a].y - particlesArray[b].y;
+            if (Math.abs(dy) > maxDist) continue;
+
+            let distanceSq = dx * dx + dy * dy;
+
+            if (distanceSq < maxDistanceSq) {
+                let opacity = 1 - distanceSq / 20000;
                 ctx.strokeStyle = particleColor.replace("0.5)", opacity + ")");
                 ctx.lineWidth = 1;
                 ctx.beginPath();

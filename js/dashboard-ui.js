@@ -10,7 +10,7 @@ async function pinChart(chartId, title) {
     const plotlyLayout = chartDiv.layout;
 
     if (!plotlyData) {
-        alert("Could not read chart data");
+        appendErrorMessage("Could not read chart data to pin.");
         return;
     }
 
@@ -43,10 +43,10 @@ async function pinChart(chartId, title) {
                 refreshDashboard();
             }
         } else {
-            alert("Failed to pin chart: " + (result.error || "Unknown error"));
+            appendErrorMessage("Failed to pin chart: " + (result.error || "Unknown error"));
         }
     } catch (error) {
-        alert("Error pinning chart. Is the backend running?");
+        appendErrorMessage("Error pinning chart. Is the backend running?");
         console.error("Pin error:", error);
     }
 }
@@ -140,13 +140,20 @@ function openFullscreenChart(chartId) {
             responsive: true,
             displayModeBar: true,
         });
-    }, 100);
+
+        // Focus management: focus the close button when opened
+        const closeBtn = overlay.querySelector('.close-fullscreen');
+        if (closeBtn) closeBtn.focus();
+    }, CONFIG.PLOTLY_RENDER_TIMEOUT);
 }
 
 function closeFullscreenChart() {
     const overlay = document.getElementById("chart-fullscreen-overlay");
     overlay.classList.remove("visible");
     Plotly.purge("fullscreen-chart");
+    
+    // Return focus to the original active element if we stored it, or just body
+    document.body.focus();
 }
 
 function closeFullscreen(event) {
@@ -155,6 +162,37 @@ function closeFullscreen(event) {
         closeFullscreenChart();
     }
 }
+
+// Global Keyboard Accessibility for Modals
+document.addEventListener('keydown', function(event) {
+    const overlay = document.getElementById("chart-fullscreen-overlay");
+    if (!overlay || !overlay.classList.contains("visible")) return;
+
+    if (event.key === "Escape") {
+        closeFullscreenChart();
+        return;
+    }
+
+    if (event.key === "Tab") {
+        const focusableElements = overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        
+        // Plotly might inject elements, so we query dynamically
+        const firstFocusableElement = focusableElements[0];
+        const lastFocusableElement = focusableElements[focusableElements.length - 1];
+
+        if (event.shiftKey) { /* shift + tab */
+            if (document.activeElement === firstFocusableElement) {
+                lastFocusableElement.focus();
+                event.preventDefault();
+            }
+        } else { /* tab */
+            if (document.activeElement === lastFocusableElement) {
+                firstFocusableElement.focus();
+                event.preventDefault();
+            }
+        }
+    }
+});
 
 // ============================================================
 // Native Dashboard (replaces Streamlit)
@@ -263,7 +301,7 @@ function renderDashboardGrid() {
                     width: undefined, // Fix: Reset width to force responsiveness
                     title: "",        // Fix: Remove internal title (already in header)
                     margin: { l: 40, r: 40, t: 30, b: 40 },
-                    height: colSpan === 3 ? 420 : 340,
+                    height: colSpan === 3 ? CONFIG.CHART_HEIGHT_3_COL : CONFIG.CHART_HEIGHT_1_COL,
                 };
                 Plotly.newPlot(plotId, chart.chart.data, layout, {
                     responsive: true,
@@ -289,7 +327,7 @@ function resizeAllDashboardCharts() {
                 Plotly.Plots.resize(el);
             }
         });
-    }, 350);
+    }, CONFIG.CHART_RESIZE_DELAY);
 }
 
 // ============================================================

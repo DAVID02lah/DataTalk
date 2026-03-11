@@ -2,6 +2,8 @@
 
 import collections
 
+import app_config
+
 
 class QueryCache:
     """Simple bounded in-memory cache to prevent unbounded growth."""
@@ -36,7 +38,7 @@ class AppState:
     def __init__(self):
         self.chat_histories: dict[str, list[dict[str, object]]] = {}
         self.active_file: dict[str, str | None] = {"filename": None}
-        self.query_cache = QueryCache(max_items=300)
+        self.query_cache = QueryCache(max_items=app_config.QUERY_CACHE_SIZE)
         self._file_cache: dict[str, dict] = {}  # filename -> cached computations
 
     def get_cached(self, filename, key):

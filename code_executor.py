@@ -15,8 +15,9 @@ import traceback
 import numpy as np
 import pandas as pd
 
+import app_config
 
-EXEC_TIMEOUT = 60
+EXEC_TIMEOUT = app_config.EXEC_TIMEOUT
 MAX_CODE_LENGTH = 10000
 
 BLOCKED_BUILTINS = {

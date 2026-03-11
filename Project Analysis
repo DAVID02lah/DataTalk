@@ -1,74 +1,319 @@
 # Data Talk — Project Analysis
 
-## Architecture Overview
+## 1. Architecture Overview
 
 ```mermaid
 graph LR
-    A[Browser<br>HTML/JS/CSS] -->|REST API| B[Flask Server<br>server.py]
-    B --> C[Gemini Service<br>gemini_service.py]
-    B --> D[Data Service<br>data_service.py]
-    B --> E[Code Executor<br>code_executor.py]
-    C -->|API| F[Google Gemini]
-    E -->|Subprocess| G[Sandboxed Python]
+    subgraph Frontend ["Frontend (Vanilla HTML/JS/CSS)"]
+        A[index.html<br>Landing Page] -->|Navigate| B[login.html<br>Login UI Only]
+        B -->|Redirect| C[dashboard.html<br>Main SPA]
+        C --> C1[core.js<br>State & Particles]
+        C --> C2[data-chat.js<br>Upload & Chat]
+        C --> C3[dashboard-ui.js<br>Dashboard Grid]
+    end
+
+    subgraph Backend ["Backend (Flask / Python)"]
+        D[server.py<br>REST API Router]
+        D --> E[gemini_service.py<br>LLM Orchestration]
+        D --> F[data_service.py<br>Data Loading & Profiling]
+        D --> G[code_executor.py<br>Sandboxed Execution]
+        D --> H[app_state.py<br>Cache & State]
+        D --> I[app_config.py<br>Environment Config]
+    end
+
+    subgraph External ["External Services"]
+        J[Google Gemini<br>3.1 Flash Lite]
+    end
+
+    C2 -->|REST API| D
+    C3 -->|REST API| D
+    E -->|API Call| J
+    G -->|Subprocess| K[Isolated Python<br>Process]
 ```
 
 A vanilla HTML/JS frontend talks to a Flask backend (Python). The backend orchestrates a multi-phase AI pipeline: extract → generate code → execute in sandbox → interpret results.
 
 ---
 
-## Strengths
+## 2. Complete Request Workflow
 
-| Area | Details |
-|---|---|
-| **Smart pipeline** | The 3-phase approach (extraction → code gen → interpretation) is well-designed. It sends lean schema to save tokens, generates executable Python, and then has Gemini interpret computed results — much better than asking the LLM to analyze raw data directly. |
-| **Security** | `code_executor.py` has solid sandboxing: AST validation, blocked builtins/imports, subprocess isolation, and a 10s timeout. Good defense-in-depth. |
-| **Data profiling** | `data_service.py` auto-detects dataset types (survey, time series, transactional) and generates domain-specific analysis suggestions — improves LLM output quality significantly. |
-| **Token efficiency** | Schema context is dynamically sized (`max_tokens` budget), correlations are computed locally, and only metadata is sent to the LLM instead of raw data. |
-| **UX polish** | Progress phases during AI processing, follow-up suggestions, chart annotations, drag-and-drop dashboard — good attention to user experience. |
-| **Retry logic** | Code execution has 2 retry attempts with error feedback to Gemini, plus a text-only fallback — graceful degradation. |
+```mermaid
+flowchart TD
+    START([User Opens App]) --> IDX[index.html<br>Landing Page]
+    IDX -->|Click Sign In| LOGIN[login.html<br>Cosmetic Login]
+    LOGIN -->|Any Email/Pass| DASH[dashboard.html<br>Main SPA Loads]
+
+    DASH --> NAV{User Action?}
+
+    NAV -->|Upload File| UPLOAD
+    NAV -->|Ask Question| CHAT
+    NAV -->|View Dashboard| DBRD
+
+    subgraph UPLOAD ["File Upload Flow"]
+        U1[Drag & Drop or Click<br>CSV / XLSX / XLS] --> U2[POST /api/upload<br>Validates type & size]
+        U2 --> U3[data_service.save_uploaded_file<br>Save to /uploads with collision avoidance]
+        U3 --> U4[data_service.load_file<br>Parse into Pandas DataFrame]
+        U4 --> U5[Set as Active File<br>in AppState singleton]
+        U5 --> U6[GET /api/data<br>Load into Handsontable Grid]
+        U5 --> U7[POST /api/suggest-questions<br>Gemini generates 4 smart questions]
+        U6 --> U8[Data Connector View<br>Shows Interactive Grid]
+        U7 --> U9[Chat View<br>Shows Suggestion Chips]
+    end
+
+    subgraph CHAT ["Chat Analysis Pipeline"]
+        direction TB
+        C1[User Types Question] --> C2[POST /api/chat<br>with filename + message]
+        C2 --> C3{Cache Hit?<br>MD5 hash lookup}
+        C3 -->|Yes| C12[Return Cached Result<br>with cached badge]
+
+        C3 -->|No| C4["Phase 0.5: Data Extraction<br>gemini_service.generate_data_extraction_code()"]
+        C4 --> C5["code_executor.execute_extraction_code()<br>Extract unique values from categorical columns"]
+
+        C5 --> C6["Phase 1: Code Generation<br>data_service.get_schema_string() → rich context<br>data_service.get_data_profile() → dataset type<br>gemini_service.generate_analysis_code() → pandas code"]
+
+        C6 --> C7["code_executor.execute_analysis_code()<br>Subprocess with 60s timeout + AST validation"]
+
+        C7 --> C8{Execution<br>Success?}
+        C8 -->|Yes| C10["Phase 2: Interpretation<br>gemini_service.interpret_results()<br>Send computed results → get natural language explanation"]
+        C8 -->|No| C9{Retries Left?<br>MAX_RETRIES = 2}
+        C9 -->|Yes| C6B["gemini_service.retry_analysis_code()<br>Feed error message back to LLM"]
+        C6B --> C7
+        C9 -->|No| C11["Phase 3: Fallback<br>gemini_service.analyze_data()<br>Text-only analysis without code execution"]
+
+        C10 --> C12B[Cache Result<br>MD5 key → LRU cache]
+        C11 --> C12B
+        C12B --> C13[Render in Chat<br>Markdown + Plotly charts + tables + stats]
+        C12 --> C13
+        C13 --> C14[Generate Follow-up Suggestions]
+    end
+
+    subgraph DBRD ["Dashboard Flow"]
+        D1[Pin Chart from Chat] --> D2[POST /api/dashboard/pin<br>Save Plotly data + layout]
+        D2 --> D3[Dashboard Grid<br>3-column CSS Grid]
+        D3 --> D4[Drag & Drop Reorder]
+        D3 --> D5[Resize: 1, 2, or 3 columns]
+        D3 --> D6[Download PNG / Remove]
+        D3 --> D7[Fullscreen Expand]
+    end
+
+    style UPLOAD fill:#e8f5e9,stroke:#4caf50
+    style CHAT fill:#e3f2fd,stroke:#2196f3
+    style DBRD fill:#fff3e0,stroke:#ff9800
+```
 
 ---
 
-## Weaknesses
+## 3. Code Execution Sandbox — Security Model
 
-| Area | Details |
-|---|---|
-| **No authentication** | `login.html` is purely cosmetic — any email/password logs you in. No sessions, tokens, or user management. |
-| **Single-user only** | `AppState` is a global singleton. Multiple users would share chat history, active file, and query cache. |
-| **No persistent storage** | Everything is in-memory (chat history saved as flat JSON). Server restart loses cache. No database. |
-| **Large monolithic files** | `script.js` (1,350+ lines) and `dashboard.html` (1,470+ lines with inline CSS) are hard to maintain. |
-| **No tests** | Zero test coverage. The sandbox, data parsing, and API endpoints are all untested. |
-| **No error boundaries** | Frontend `fetch` calls have basic try/catch but no retry, no offline detection, no request timeout. |
-| **File management** | Uploaded files accumulate forever in `/uploads`. No cleanup, no size quotas, no per-user isolation. |
-| **Hardcoded config** | `API_BASE = "http://localhost:5000"` is hardcoded in JS. Won't work in any deployment scenario. |
+```mermaid
+flowchart LR
+    CODE[LLM-Generated<br>Python Code] --> AST[AST Parsing<br>& Validation]
+    AST -->|Blocked| REJECT[❌ Rejected<br>Unsafe code detected]
+    AST -->|Passed| SUB[Subprocess<br>Isolation]
+    SUB --> SAFE["Safe Globals Only:<br>pandas, numpy, math,<br>json, datetime, re,<br>statistics, collections"]
+    SAFE --> TIMEOUT["60s Timeout Guard"]
+    TIMEOUT -->|Success| RESULT[Normalized Results<br>tables, charts, text, stats]
+    TIMEOUT -->|Timeout| FAIL[❌ TimeoutError]
 
----
-
-## Suggested Improvements
-
-### High Priority (Functionality)
-
-1. **Real authentication** — Add Flask-Login or JWT-based auth. The login page already exists, just needs a real backend.
-2. **Multi-file support** — Allow users to switch between uploaded files without re-uploading. Add a file picker to the Data Connector.
-3. **File cleanup** — Auto-delete files older than N days, or add a delete button per file.
-4. **Request timeout on frontend** — Add `AbortController` with a 60s timeout to prevent hung requests.
-
-### Medium Priority (Code Quality)
-
-5. **Split `script.js`** — Break into modules: `chat.js`, `dashboard.js`, `upload.js`, `particles.js`.
-6. **Extract inline CSS from `dashboard.html`** — Move the ~930 lines of `<style>` into `styles.css` or a dedicated `dashboard.css`.
-7. **Make `API_BASE` configurable** — Read from a `<meta>` tag or `/api/config` endpoint so deployment works.
-8. **Add tests** — At minimum: `data_service` (parsing, profiling), `code_executor` (sandbox security), and API endpoint tests.
-
-### Low Priority (Nice to Have)
-
-9. **Export chat** — Allow exporting the full chat conversation as PDF or Markdown.
-10. **Dark mode** — The CSS variable system is already in place (`--text-color`, etc.), making this straightforward.
-11. **Streaming responses** — Use SSE or WebSocket to stream AI responses token-by-token instead of waiting for the full response.
-12. **Rate limiting** — Add Flask-Limiter to prevent API abuse.
+    subgraph Blocked ["Blocked by AST Validator"]
+        B1["Builtins: open, eval, exec,<br>__import__, exit, input"]
+        B2["Modules: os, sys, subprocess,<br>socket, pathlib, shutil"]
+        B3["Attributes: __class__, __dict__,<br>__globals__, system, popen"]
+    end
+```
 
 ---
 
-## Verdict
+## 4. Frontend View Architecture
 
-Data Talk is a **well-architected prototype** with a clever AI pipeline and good UX. The main gaps are around production-readiness: auth, multi-tenancy, persistence, and testing. The codebase is clean and readable but would benefit from modularization as it grows.
+```mermaid
+graph TD
+    SPA[dashboard.html — Single Page App]
+    SPA --> SIDE[Sidebar<br>260px fixed]
+    SPA --> TOP[Top Bar<br>56px]
+    SPA --> MAIN[Main Content Area]
+
+    SIDE --> NAV1["📊 Data Connector"]
+    SIDE --> NAV2["💬 Chat Analysis"]
+    SIDE --> NAV3["📈 Visualisations"]
+    SIDE --> FINFO[File Info Panel]
+    SIDE --> CLEAR[Clear Chat / Sign Out]
+
+    MAIN --> VIEW1["Data Connector View<br>─ Upload Zone drag/drop<br>─ Handsontable Grid<br>─ Data Preview Panel"]
+    MAIN --> VIEW2["Chat View<br>─ Hero empty state<br>─ Messages Container<br>─ Typing Indicator<br>─ Input Bar + Suggestions"]
+    MAIN --> VIEW3["Visualisations View<br>─ Dashboard Grid 3-col<br>─ Pinned Charts<br>─ Drag & Drop + Resize"]
+    MAIN --> MODAL["Fullscreen Chart Modal"]
+
+    NAV1 -->|switchView| VIEW1
+    NAV2 -->|switchView| VIEW2
+    NAV3 -->|switchView| VIEW3
+```
+
+---
+
+## 5. Strengths
+
+| # | Area | Details |
+|---|------|---------|
+| 1 | **Intelligent Multi-Phase Pipeline** | The 4-phase approach (extraction → code gen → execution → interpretation) is architecturally excellent. Instead of asking the LLM to analyze raw data (expensive and inaccurate), it generates executable pandas code, runs it in a sandbox, then has Gemini interpret computed results. This produces more accurate analyses at lower token cost. |
+| 2 | **Sandbox Security (Defense-in-Depth)** | `code_executor.py` implements 4 layers: AST-based static analysis via `_SafetyVisitor`, blocked builtins/imports whitelist, subprocess isolation, and a 60-second timeout. This is a well-thought-out defense-in-depth model against LLM-generated malicious code. |
+| 3 | **Smart Data Profiling** | `data_service.py` auto-detects dataset types (survey, time series, transactional, geographic, etc.) and generates domain-specific analysis suggestions. This provides the LLM with richer context, significantly improving output quality compared to generic prompts. |
+| 4 | **Token-Efficient Context Building** | Schema context is dynamically sized with a `max_tokens` budget. Correlations are computed locally, only metadata (not raw data) is sent to the LLM. The extraction phase pulls out unique categorical values so the code generator knows exact column names — prevents hallucinated column references. |
+| 5 | **Graceful Degradation** | Code execution has 2 retry attempts with error feedback to Gemini, plus a text-only fallback (Phase 3). If code fails completely, users still get useful analysis. Cached results show a "⚡ Cached" badge for transparency. |
+| 6 | **UX Polish** | Progress phases during AI processing, follow-up suggestion chips, chart annotations (click to label), drag-and-drop dashboard with column spanning, fullscreen chart expansion, data preview side panel — high attention to user experience for a prototype. |
+| 7 | **Clean Modular CSS** | Stylesheets are split into 4 concerns: layout, chat, grid, overlays. Imported via a manifest (`dashboard.css`). CSS variables used for theming. Good organization. |
+| 8 | **All Dependencies Pinned** | `requirements.txt` pins exact versions for all 7 packages — excellent for reproducibility and security. |
+| 9 | **Easy Launch** | `start.bat` handles Python checks, dependency installation, server start, and browser launch in one click — low friction for non-technical users. |
+| 10 | **Query Caching** | LRU cache (300 items) with MD5 hash keys prevents redundant API calls for repeated questions, saving both time and API costs. |
+
+---
+
+## 6. Weaknesses
+
+### 6.1 Critical Issues
+
+| # | Area | Details | Location |
+|---|------|---------|----------|
+| 1 | **No Authentication** | `login.html` is purely cosmetic — any email/password redirects to `dashboard.html`. No sessions, tokens, JWT, or user management. All API endpoints are completely public. | `login.html` |
+| 2 | **Single-User Global State** | `AppState` is a singleton. `active_file`, `chat_histories`, and `query_cache` are global. Two concurrent users would overwrite each other's state, see each other's chats, and corrupt data. | `app_state.py` |
+| 3 | **Thread Safety Missing** | `QueryCache` and `AppState` have no locks. Flask's threaded mode (default) means concurrent requests cause race conditions on cache reads/writes and file state mutations. | `app_state.py` |
+| 4 | **No Persistent Storage** | Everything is in-memory. Server restart loses all cache. Chat history saves to flat JSON, but dashboard config and file computations vanish. No database. | `app_state.py`, `server.py` |
+| 5 | **File Cache Unbounded** | `_file_cache` in `AppState` has no eviction policy — grows indefinitely with each new file upload. On a long-running server, this causes OOM. | `app_state.py` |
+
+### 6.2 Security Concerns
+
+| # | Area | Details | Location |
+|---|------|---------|----------|
+| 1 | **No Rate Limiting** | Chat and suggestion endpoints trigger expensive LLM calls. No throttling means easy API abuse/DOS. | `server.py` |
+| 2 | **No Prompt Injection Protection** | User questions are interpolated directly into LLM prompts. A crafted question could manipulate the system prompt, causing unintended code generation. | `gemini_service.py` |
+| 3 | **Sandbox Escape Risk** | While AST validation blocks known dangerous patterns, `__subclasses__()` chains and metaclass tricks are not fully blocked. A sufficiently crafted payload could potentially escape. | `code_executor.py` |
+| 4 | **No HTTPS** | Flask development server runs plain HTTP. Credentials (even fake ones) and API data transmitted in cleartext. | `server.py` |
+| 5 | **CDN Dependencies Without SRI** | 6 external libraries loaded from CDN without Subresource Integrity hashes. A compromised CDN could inject malicious code. | `dashboard.html` |
+| 6 | **Path Traversal Incomplete** | File path validation exists but `.` resolution not fully enforced in all paths. | `server.py` |
+| 7 | **No CORS Validation** | Malformed origins from env var accepted without validation. | `app_config.py` |
+
+### 6.3 Performance Issues
+
+| # | Area | Details | Location |
+|---|------|---------|----------|
+| 1 | **DataFrame Copied Per Execution** | Full DataFrame is copied for every code execution call — doubles memory for large files. | `code_executor.py` |
+| 2 | **O(n²) Correlation Computation** | Numeric correlation matrix computed for all column pairs — slow/expensive with 100+ columns. | `data_service.py` |
+| 3 | **Subprocess Per Query** | A new Python process is spawned for every single chat query. Process creation overhead adds 0.5-1s per request. | `code_executor.py` |
+| 4 | **No File Size Validation Client-Side** | Users can attempt uploading 1GB files with no client-side warning — only server validates after full upload. | `js/core.js` |
+| 5 | **Particle Animation O(n²) (Fixed)** | `connectParticles` computes distance for *every* pair every frame. Very heavy on CPU. Needs spatial partitioning or bounding boxes. | `js/core.js` |
+
+### 6.4 Code Quality Issues
+
+| # | Area | Details | Location |
+|---|------|---------|----------|
+| 1 | **Zero Test Coverage** | No unit tests, integration tests, or end-to-end tests for any component. The sandbox, data parsing, and API endpoints are all untested. | Entire project |
+| 2 | **Silent Failures** | `gemini_service` returns `None` instead of raising exceptions. Backend errors are swallowed with `console.error()` on frontend — users don't know what failed. | `gemini_service.py`, all JS |
+| 3 | **Magic Numbers Everywhere (Fixed)** | History caps (5, 6 messages), timeouts (60s), token budgets, chart heights (340px, 380px, 420px), animation delays (100ms, 350ms, 2500ms) scattered with no documentation. | All files |
+| 4 | **Hardcoded `API_BASE`** | `API_BASE: "http://localhost:5000"` in JS. Won't work in any deployment scenario. | `js/core.js` |
+| 5 | **Hardcoded User Identity** | `"David Lee"` hardcoded in the dashboard UI. | `dashboard.html` |
+| 6 | **No JSDoc / Docstrings** | Frontend functions have no documentation. Backend has minimal docstrings. Unclear parameter expectations. | All files |
+| 7 | **Inconsistent Error Handling** | `pinChart()` uses `alert()`, `refreshDashboard()` swallows errors silently, some endpoints return different error shapes. | `js/dashboard-ui.js`, `server.py` |
+| 8 | **Large Monolithic `chat()` Function** | The main chat endpoint handler is 144 lines — should be decomposed into pipeline stages. | `server.py` |
+
+### 6.5 UX / Accessibility Issues
+
+| # | Area | Details |
+|---|------|---------|
+| 1 | **No Responsive Design** | Sidebar is fixed 260px, dashboard grid is fixed 3-column, no tablet/mobile breakpoints except a single 768px query in `styles.css`. App is unusable on mobile. |
+| 2 | **No Keyboard Navigation** | Drag-and-drop has no keyboard alternative. No focus traps in modals. No skip links. Chat send button requires mouse. |
+| 3 | **SVG Icons Without Labels (Fixed)** | Navigation icons have no `aria-label`. Screen readers cannot identify sidebar sections. |
+| 4 | **No Focus Management (Fixed)** | Fullscreen chart modal has no `aria-modal`, no focus trap, can't be closed with Escape key. |
+| 5 | **Color-Only Indicators (Fixed)** | Active nav item, cached badge, and error states rely on color alone — fails WCAG 2.1 SC 1.4.1. |
+| 6 | **No Debounce on Chat Send (Fixed)** | Users can spam the send button, creating multiple concurrent API requests. |
+| 7 | **Typing Indicator Timing Mismatch (Fixed)** | Progress phases rotate on a fixed 2.5s timer regardless of actual API response time — misleading. |
+| 8 | **Landing Page Links Broken** | Navigation links (Products, Solutions, etc.) and CTA buttons on `index.html` all point to `#`. |
+| 9 | **Upload Success Shows Before Data Loads (Fixed)** | Success banner appears before grid is populated — user sees "success" with empty grid. |
+
+---
+
+## 7. Suggested Improvements — Roadmap
+
+### Phase 1: Critical Fixes (Must-Have)
+
+| # | Improvement | Impact | Effort |
+|---|-------------|--------|--------|
+| 1 | **Add real authentication** — Implement Flask-Login or JWT. The login page already exists; add session management, password hashing (bcrypt), and route protection via decorators. | Security | Medium |
+| 2 | **Make state per-session** — Replace the `AppState` singleton with session-scoped state (Flask sessions + Redis, or per-user dict keyed by session ID). | Multi-user | Medium |
+| 3 | **Add thread-safe caching** — Use `threading.Lock()` or switch to `cachetools.LRUCache` with a lock. | Stability | Low |
+| 4 | **Add rate limiting** — Use `Flask-Limiter` on `/api/chat` and `/api/suggest-questions` (e.g., 10 requests/minute). | Security | Low |
+| 5 | **Make `API_BASE` dynamic** — Read from a `<meta>` tag set by server, or use relative URLs (`/api/...`). | Deployment | Low |
+| 6 | **Add frontend request timeouts** — Use `AbortController` with 60s timeout on all fetch calls. | Reliability | Low |
+| 7 | **Validate file size client-side (Fixed)** — Check `file.size` before uploading and show a warning. Cap at 10MB to match server config. | UX | Low |
+
+### Phase 2: Quality & Reliability
+
+| # | Improvement | Impact | Effort |
+|---|-------------|--------|--------|
+| 8 | **Add test suite** — `pytest` tests for: `code_executor` (sandbox escapes), `data_service` (parsing edge cases), `server.py` (API contract tests), and `gemini_service` (mock LLM responses). | Quality | High |
+| 9 | **Add SRI hashes to CDN scripts** — Generate integrity hashes for all 6 external libraries in `dashboard.html`. | Security | Low |
+| 10 | **Evict file cache** — Add TTL or max-size eviction to `_file_cache`. Consider `cachetools.TTLCache`. | Memory | Low |
+| 11 | **Debounce chat sends (Fixed)** — Disable send button while request is in-flight. Re-enable on response. | UX | Low |
+| 12 | **Add file cleanup** — Auto-delete uploads older than N days, or add a delete button per file. | Storage | Low |
+| 13 | **Error boundaries** — Replace `alert()` calls with branded toast notifications. Show user-facing error messages on network failures. | UX | Medium |
+| 14 | **Extract magic numbers (Fixed)** — Create a `constants.js` and a Python config class for all thresholds, timeouts, dimensions. | Maintainability | Low |
+
+### Phase 3: Production Readiness
+
+| # | Improvement | Impact | Effort |
+|---|-------------|--------|--------|
+| 15 | **Add persistent database** — SQLite (for single-user) or PostgreSQL (multi-user) for chat history, user accounts, dashboard configs. | Persistence | High |
+| 16 | **Add HTTPS** — Use a reverse proxy (NGINX/Caddy) or `ssl_context` in Flask for production. | Security | Medium |
+| 17 | **Streaming responses** — Use SSE (Server-Sent Events) to stream Gemini responses token-by-token instead of blocking until complete. | UX | High |
+| 18 | **Responsive design** — Add CSS breakpoints at 768px, 1024px, 1280px. Collapse sidebar to hamburger on mobile. Stack dashboard grid to 1 column. | Mobile | Medium |
+| 19 | **Accessibility pass** — Add ARIA labels to all icons, focus traps in modals, keyboard nav for drag-drop (arrow keys), Esc to close modals, skip links. | A11y | Medium |
+| 20 | **Process pool for execution** — Replace per-query subprocess spawning with a `ProcessPoolExecutor` to reuse workers. | Performance | Medium |
+
+### Phase 4: Nice-to-Have
+
+| # | Improvement | Impact | Effort |
+|---|-------------|--------|--------|
+| 21 | **Export chat** — Allow exporting conversations as PDF or Markdown. | Feature | Medium |
+| 22 | **Dark mode** — CSS variables are already in place. Add a toggle and `prefers-color-scheme` media query. | UX | Low |
+| 23 | **Multi-file analysis** — Allow cross-file joins and comparisons (e.g., "compare sales.csv with inventory.csv"). | Feature | High |
+| 24 | **Prompt injection guardrails** — Add input sanitization and output validation for LLM interactions. Detect and block prompt manipulation attempts. | Security | Medium |
+| 25 | **Undo for dashboard actions** — Toast with "Undo" button instead of immediate deletion. | UX | Low |
+
+---
+
+## 8. File-by-File Summary
+
+| File | Lines | Role | Health |
+|------|-------|------|--------|
+| `server.py` | ~500 | Flask router, multi-phase AI pipeline orchestrator | 🟡 Large `chat()` function, no auth middleware |
+| `gemini_service.py` | ~450 | LLM prompts, code gen, interpretation, extraction | 🟡 Silent None returns, prompt injection risk |
+| `data_service.py` | ~450 | Data loading, schema gen, profiling, statistics | 🟢 Solid, but O(n²) correlations |
+| `code_executor.py` | ~350 | Sandboxed execution with AST validation | 🟢 Good security, but subprocess overhead |
+| `app_state.py` | ~50 | Global singleton state + LRU cache | 🔴 Not thread-safe, unbounded file cache |
+| `app_config.py` | ~30 | Environment variable parsing | 🟢 Clean and minimal |
+| `js/core.js` | ~450 | App state, particles, DOM init, utilities | 🟡 Hardcoded API_BASE, memory leaks |
+| `js/data-chat.js` | ~1050 | Upload, chat, chart rendering, annotations | 🟡 Largest file, no debounce, timing issues |
+| `js/dashboard-ui.js` | ~520 | Dashboard grid, drag-drop, pin/remove | 🟡 Race conditions on resize, no keyboard |
+| `dashboard.html` | ~207 | Main SPA shell | 🟡 CDN without SRI, inline event handlers |
+| `index.html` | ~56 | Landing page | 🟠 Broken nav links, placeholder CTAs |
+| `login.html` | ~118 | Fake login page | 🔴 No real auth, hardcoded redirect |
+| `styles.css` | ~380 | Landing page + shared styles | 🟡 Only 1 breakpoint, many hardcoded values |
+| `css/dashboard-*.css` | ~1108 | Dashboard layout, chat, grid, overlays | 🟡 No responsive design, z-index unmanaged |
+| `start.bat` | ~44 | Windows launcher | 🟡 Silent pip errors, no Python version check |
+| `requirements.txt` | 7 | Dependencies | 🟢 All pinned — excellent |
+
+---
+
+## 9. Verdict
+
+**Data Talk is a well-architected prototype with a genuinely clever AI pipeline.** The multi-phase approach (extract → generate code → execute → interpret) is superior to naive LLM-based data analysis, and the sandbox security model shows thoughtful engineering. UX polish — progress indicators, suggestion chips, dashboard pinning, chart annotations — elevates it above a typical hackathon project.
+
+**The main gaps are production-readiness:**
+- **Security**: No real auth, no rate limiting, no HTTPS, CDN scripts without integrity checks
+- **Scalability**: Single-user global state, thread-unsafe caches, per-query subprocess spawning
+- **Reliability**: Zero test coverage, silent failures, unbounded memory growth
+- **Accessibility**: Not usable on mobile, no keyboard navigation, missing ARIA labels
+
+**As a prototype / personal tool**: Excellent. The pipeline design is smart and the UX is polished.
+**As a production application**: Needs the Phase 1-3 improvements above before serving real users.
+
+The codebase is clean and readable — a strong foundation to build on.

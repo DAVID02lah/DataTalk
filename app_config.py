@@ -33,3 +33,9 @@ DEBUG = get_bool_env("FLASK_DEBUG", False)
 PORT = get_int_env("PORT", 5000)
 MAX_UPLOAD_MB = get_int_env("MAX_UPLOAD_MB", 10)
 MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024
+
+# Magic Numbers extracted from backend execution logic
+MAX_RETRIES = get_int_env("MAX_RETRIES", 2)
+CHAT_HISTORY_CAP = get_int_env("CHAT_HISTORY_CAP", 5)
+QUERY_CACHE_SIZE = get_int_env("QUERY_CACHE_SIZE", 300)
+EXEC_TIMEOUT = get_int_env("EXEC_TIMEOUT", 60)

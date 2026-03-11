@@ -318,6 +318,7 @@
     padding: 2px 8px;
     border-radius: 4px;
     background: rgba(52, 168, 83, 0.08);
+    border: 1px solid rgba(52, 168, 83, 0.4);
     color: #34a853;
     font-size: 0.72rem;
     font-weight: 500;

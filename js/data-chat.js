@@ -38,24 +38,39 @@ function showUploadError(dropZone, errorMessage) {
 }
 
 function loadFileIntoGrid(file) {
-    const reader = new FileReader();
-    reader.onload = function (e) {
-        try {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: "array" });
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            const json = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
-            loadGrid(json);
-        } catch (err) {
-            console.error("Grid load error:", err);
-        }
-    };
-    reader.readAsArrayBuffer(file);
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: "array" });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const json = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+                loadGrid(json);
+                resolve();
+            } catch (err) {
+                console.error("Grid load error:", err);
+                reject(err);
+            }
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+    });
 }
 
 async function handleFileUpload(files) {
     const file = files[0];
     if (!file) return;
+
+    // Phase 3: Add Client-Side File Validation (10MB limit)
+    const MAX_SIZE_MB = 10;
+    if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+        showUploadError(
+            document.getElementById("upload-container"), 
+            `File size exceeds ${MAX_SIZE_MB}MB limit. Please upload a smaller dataset.`
+        );
+        return;
+    }
 
     const ext = file.name.split(".").pop().toLowerCase();
     if (!["csv", "xlsx", "xls"].includes(ext)) {
@@ -86,14 +101,9 @@ async function handleFileUpload(files) {
             summary: result.summary,
         };
 
+        await loadFileIntoGrid(file);
         showUploadSuccess(result);
-        loadFileIntoGrid(file);
         updateSidebarFileInfo(result.filename, result.summary);
-
-        const subtitle = document.getElementById("chat-hero-subtitle");
-        if (subtitle) {
-            subtitle.textContent = `Analyzing: ${result.filename} (${result.summary.shape.rows} rows)`;
-        }
 
         fetchSmartQuestions();
         populateDataPreview(result.summary);
@@ -126,7 +136,31 @@ function loadGrid(data) {
             dropdownMenu: true,
             stretchH: "all",
         });
+
+        // Handsontable injects theme CSS at runtime; force its color-scheme to light.
+        patchHandsontableColorScheme(gridContainer);
     }
+}
+
+function patchHandsontableColorScheme(gridContainer) {
+    if (!gridContainer) return;
+
+    // Keep computed scheme driven by CSS variable.
+    gridContainer.style.colorScheme = "var(--ht-color-scheme, light)";
+
+    const styleEls = gridContainer.querySelectorAll("style");
+    styleEls.forEach((styleEl) => {
+        const css = styleEl.textContent || "";
+        if (!css.includes(":where(.ht-theme-main)")) return;
+
+        const patched = css.replace(
+            "color-scheme: light dark;",
+            "color-scheme: var(--ht-color-scheme, light);"
+        );
+        if (patched !== css) {
+            styleEl.textContent = patched;
+        }
+    });
 }
 
 function updateSidebarFileInfo(filename, summary) {
@@ -174,11 +208,6 @@ async function checkExistingFiles() {
                         loadGrid(sumData.summary.preview); // Fallback to preview
                     }
                 }
-
-                const subtitle = document.getElementById("chat-hero-subtitle");
-                if (subtitle) {
-                    subtitle.textContent = `Analyzing: ${data.active} (${sumData.summary.shape.rows} rows)`;
-                }
             }
         }
     } catch (e) {
@@ -202,13 +231,16 @@ async function sendMessage(skipCache = false) {
     // Switch to message view (hide hero)
     showChatMessages();
 
+    // Disable inputs to prevent multi-sends
+    input.disabled = true;
+    const sendBtn = document.getElementById("send-btn");
+    if (sendBtn) sendBtn.disabled = true;
+
     // Add user message
     appendChatMessage("user", message);
 
     // Show typing indicator
     App.state.isWaitingForAI = true;
-    const sendBtn = document.getElementById("send-btn");
-    if (sendBtn) sendBtn.disabled = true;
     showTypingIndicator();
 
     try {
@@ -240,7 +272,9 @@ async function sendMessage(skipCache = false) {
         );
     } finally {
         App.state.isWaitingForAI = false;
-        if (sendBtn) sendBtn.disabled = false;
+        input.disabled = false;
+        if (sendBtn) sendBtn.disabled = !input.value.trim();
+        input.focus();
     }
 }
 
@@ -308,9 +342,6 @@ async function clearChatHistory() {
         if (uploadContainer) uploadContainer.style.display = "flex";
         if (dataGridContainer) dataGridContainer.style.display = "none";
 
-        const subtitle = document.getElementById("chat-hero-subtitle");
-        if (subtitle) subtitle.textContent = "Upload a dataset to get started";
-
     } catch (e) {
         console.error("Error clearing chat:", e);
     }
@@ -327,7 +358,7 @@ function renderChartHtml(chartJson) {
     const chartTitle = chartJson.layout?.title?.text || chartJson.layout?.title || "Chart";
     const html = `
         <div class="chat-chart-container" style="position: relative;">
-            <div id="${chartId}" style="width: 100%; height: 380px;"></div>
+            <div id="${chartId}" style="width: 100%; height: ${CONFIG.CHART_HEIGHT_DEFAULT}px;"></div>
             <div class="chart-actions">
                 <button class="chart-action-btn" onclick="pinChart('${chartId}', '${escapeAttr(typeof chartTitle === 'string' ? chartTitle : 'Chart')}')">📌 Pin to Dashboard</button>
                 <button class="chart-action-btn" onclick="downloadChart('${chartId}')">📥 Download PNG</button>
@@ -406,7 +437,7 @@ function mountPlotlyChart(chartId, chartJson) {
             document.getElementById(chartId).innerHTML =
                 '<p style="color: #ea4335;">Error rendering chart</p>';
         }
-    }, 100);
+    }, CONFIG.PLOTLY_RENDER_TIMEOUT);
 }
 
 // ============================================================
@@ -586,8 +617,6 @@ function showTypingIndicator() {
     const container = document.getElementById("chat-messages");
     if (!container) return;
 
-    App.state.progressPhaseIndex = 0;
-
     const indicator = document.createElement("div");
     indicator.id = "typing-indicator";
     indicator.className = "chat-msg";
@@ -597,7 +626,7 @@ function showTypingIndicator() {
             <div class="chat-msg-name">Data Talk AI</div>
         </div>
         <div class="typing-indicator">
-            <div class="typing-progress-text">${PROGRESS_PHASES[0]}</div>
+            <div class="typing-progress-text">Analyzing your data...</div>
             <div class="typing-dots">
                 <div class="typing-dot"></div>
                 <div class="typing-dot"></div>
@@ -607,30 +636,9 @@ function showTypingIndicator() {
     `;
     container.appendChild(indicator);
     container.scrollTop = container.scrollHeight;
-
-    // Cycle through phase messages
-    App.state.progressPhaseIndex = 1;
-    App.state.progressInterval = setInterval(() => {
-        if (App.state.progressPhaseIndex >= PROGRESS_PHASES.length) {
-            clearInterval(App.state.progressInterval);
-            App.state.progressInterval = null;
-            return;
-        }
-        const textEl = document.querySelector("#typing-indicator .typing-progress-text");
-        if (textEl) {
-            textEl.textContent = PROGRESS_PHASES[App.state.progressPhaseIndex];
-            textEl.classList.add("phase-change");
-            setTimeout(() => textEl.classList.remove("phase-change"), 300);
-        }
-        App.state.progressPhaseIndex++;
-    }, 2500);
 }
 
 function hideTypingIndicator() {
-    if (App.state.progressInterval) {
-        clearInterval(App.state.progressInterval);
-        App.state.progressInterval = null;
-    }
     const indicator = document.getElementById("typing-indicator");
     if (indicator) indicator.remove();
 }
@@ -646,8 +654,11 @@ function appendErrorMessage(text) {
 
     msgDiv.innerHTML = `
         <div class="chat-error-banner">
-            <div class="chat-error-icon">!</div>
-            <div class="chat-error-body">${htmlText}</div>
+            <div class="chat-error-icon" aria-hidden="true">!</div>
+            <div class="chat-error-body">
+                <strong>Error:</strong>
+                ${htmlText}
+            </div>
         </div>
     `;
     container.appendChild(msgDiv);
