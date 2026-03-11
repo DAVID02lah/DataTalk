@@ -2,9 +2,13 @@
 server.py — Flask API server for Data Talk.
 
 Serves static HTML files and provides REST API endpoints for:
+- User authentication (Supabase Auth)
 - File upload
 - Gemini chat analysis
 - Dashboard config save/load
+
+All /api/* data routes are protected by @require_auth.
+State is per-user via SessionManager.
 """
 
 import os
@@ -13,16 +17,18 @@ import json
 import time
 import hashlib
 import logging
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, g, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
 from werkzeug.exceptions import RequestEntityTooLarge
 
 import app_config
-from app_state import AppState
+from app_state import SessionManager
 import data_service
 import gemini_service
 import code_executor
+import auth_service
+from auth_service import require_auth
 
 load_dotenv()
 
@@ -37,16 +43,13 @@ if cors_origins:
 else:
     CORS(app)
 
-DASHBOARD_CONFIG_PATH = os.path.join(data_service.UPLOAD_DIR, "dashboard_config.json")
-CHAT_HISTORY_PATH = os.path.join(data_service.UPLOAD_DIR, "chat_history.json")
-
 logger = logging.getLogger("data_talk")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 
-state = AppState()
+session_mgr = SessionManager()
 
 ALLOWED_STATIC_FILES = {
     "index.html",
@@ -69,11 +72,48 @@ def _log_event(event, **fields):
     logger.info(json.dumps(payload, default=str))
 
 
-def _load_chat_history():
-    """Load chat history from disk on startup."""
+def _get_user_state():
+    """Get the per-user state for the current authenticated request."""
+    return session_mgr.get_state(g.user_id)
+
+
+def _get_user_upload_dir():
+    """Get per-user upload directory."""
+    user_dir = os.path.join(data_service.UPLOAD_DIR, g.user_id)
+    os.makedirs(user_dir, exist_ok=True)
+    return user_dir
+
+
+def _get_chat_history_path():
+    """Get per-user chat history file path."""
+    return os.path.join(_get_user_upload_dir(), "chat_history.json")
+
+
+def _get_dashboard_config_path():
+    """Get per-user dashboard config file path."""
+    return os.path.join(_get_user_upload_dir(), "dashboard_config.json")
+
+
+def _save_chat_history():
+    """Persist chat history to disk for the current user."""
+    state = _get_user_state()
     try:
-        if os.path.exists(CHAT_HISTORY_PATH):
-            with open(CHAT_HISTORY_PATH, "r", encoding="utf-8") as f:
+        path = _get_chat_history_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(state.chat_histories, f, indent=2, default=str)
+    except Exception as e:
+        _log_event("chat_history_save_failed", error=str(e))
+
+
+def _load_chat_history_for_user(user_id):
+    """Load chat history from disk for a specific user."""
+    state = session_mgr.get_state(user_id)
+    user_dir = os.path.join(data_service.UPLOAD_DIR, user_id)
+    chat_path = os.path.join(user_dir, "chat_history.json")
+    try:
+        if os.path.exists(chat_path):
+            with open(chat_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
                 state.chat_histories = data
@@ -82,22 +122,12 @@ def _load_chat_history():
 
     # Rehydrate active_file
     try:
-        files = data_service.list_uploaded_files()
+        files = data_service.list_uploaded_files(user_dir)
         if files:
             state.active_file["filename"] = files[0]["filename"]
-            _log_event("active_file_rehydrated", filename=files[0]["filename"])
+            _log_event("active_file_rehydrated", user_id=user_id, filename=files[0]["filename"])
     except Exception as e:
-        _log_event("active_file_rehydrate_failed", error=str(e))
-
-
-def _save_chat_history():
-    """Persist chat history to disk."""
-    try:
-        data_service.ensure_upload_dir()
-        with open(CHAT_HISTORY_PATH, "w", encoding="utf-8") as f:
-            json.dump(state.chat_histories, f, indent=2, default=str)
-    except Exception as e:
-        _log_event("chat_history_save_failed", error=str(e))
+        _log_event("active_file_rehydrate_failed", user_id=user_id, error=str(e))
 
 
 # ==============================================================
@@ -131,10 +161,95 @@ def handle_file_too_large(_err):
 
 
 # ==============================================================
+# API: Authentication
+# ==============================================================
+
+@app.route("/api/auth/signup", methods=["POST"])
+def api_signup():
+    """Register a new user."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    email = data.get("email", "").strip()
+    password = data.get("password", "")
+    display_name = data.get("display_name", "").strip()
+
+    if not email or not password:
+        return jsonify({"error": "Email and password are required"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+    result = auth_service.signup(email, password, display_name)
+    if result.get("error"):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    """Authenticate a user and return tokens."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    email = data.get("email", "").strip()
+    password = data.get("password", "")
+
+    if not email or not password:
+        return jsonify({"error": "Email and password are required"}), 400
+
+    result = auth_service.login(email, password)
+    if result.get("error"):
+        return jsonify(result), 401
+
+    # Load user state from disk on login
+    user_id = result["user"]["id"]
+    _load_chat_history_for_user(user_id)
+    _log_event("user_login", user_id=user_id, email=email)
+
+    return jsonify(result)
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+@require_auth
+def api_logout():
+    """Sign out the current user."""
+    token = request.headers.get("Authorization", "")[7:]
+    auth_service.logout(token)
+    _log_event("user_logout", user_id=g.user_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/auth/session", methods=["GET"])
+@require_auth
+def api_session():
+    """Validate the current session and return user info."""
+    profile = auth_service.get_profile(g.user_id)
+    display_name = g.user_email.split("@")[0]
+    avatar_initials = display_name[:2].upper()
+
+    if profile:
+        display_name = profile.get("display_name", display_name)
+        avatar_initials = profile.get("avatar_initials", avatar_initials)
+
+    return jsonify({
+        "valid": True,
+        "user": {
+            "id": g.user_id,
+            "email": g.user_email,
+            "display_name": display_name,
+            "avatar_initials": avatar_initials,
+        }
+    })
+
+
+# ==============================================================
 # API: File Upload
 # ==============================================================
 
 @app.route("/api/upload", methods=["POST"])
+@require_auth
 def upload_file():
     """
     Upload a CSV/Excel file.
@@ -153,11 +268,12 @@ def upload_file():
         return jsonify({"error": f"Unsupported file type: {ext}. Use CSV or Excel."}), 400
 
     try:
-        filename, _ = data_service.save_uploaded_file(file)
-        df = data_service.load_file(filename)
+        user_dir = _get_user_upload_dir()
+        filename, _ = data_service.save_uploaded_file(file, upload_dir=user_dir)
+        df = data_service.load_file(filename, upload_dir=user_dir)
         summary = data_service.get_summary(df)
 
-        # Set as active file
+        state = _get_user_state()
         state.active_file["filename"] = filename
 
         # Reset chat history and query cache for new file
@@ -165,7 +281,8 @@ def upload_file():
         state.query_cache.clear()
         state.clear_file_cache()
 
-        _log_event("file_uploaded", filename=filename, rows=summary["shape"]["rows"], cols=summary["shape"]["columns"])
+        _log_event("file_uploaded", user_id=g.user_id, filename=filename,
+                    rows=summary["shape"]["rows"], cols=summary["shape"]["columns"])
 
         return jsonify({
             "success": True,
@@ -178,17 +295,22 @@ def upload_file():
 
 
 @app.route("/api/files", methods=["GET"])
+@require_auth
 def list_files():
-    """List all uploaded files."""
-    files = data_service.list_uploaded_files()
+    """List all uploaded files for the current user."""
+    user_dir = _get_user_upload_dir()
+    files = data_service.list_uploaded_files(user_dir)
+    state = _get_user_state()
     return jsonify({"files": files, "active": state.active_file["filename"]})
 
 
 @app.route("/api/data-summary/<filename>", methods=["GET"])
+@require_auth
 def data_summary(filename):
     """Get summary stats for a specific uploaded file."""
     try:
-        df = data_service.load_file(filename)
+        user_dir = _get_user_upload_dir()
+        df = data_service.load_file(filename, upload_dir=user_dir)
         summary = data_service.get_summary(df)
         return jsonify({"filename": filename, "summary": summary})
     except FileNotFoundError:
@@ -198,11 +320,12 @@ def data_summary(filename):
 
 
 @app.route("/api/data/<filename>", methods=["GET"])
+@require_auth
 def get_full_data(filename):
     """Get the full dataset for the data connector."""
     try:
-        df = data_service.load_file(filename)
-        # Convert to list of lists with headers as first row for Handsontable
+        user_dir = _get_user_upload_dir()
+        df = data_service.load_file(filename, upload_dir=user_dir)
         data = [df.columns.tolist()] + df.fillna("").values.tolist()
         return jsonify({"filename": filename, "data": data})
     except FileNotFoundError:
@@ -212,17 +335,20 @@ def get_full_data(filename):
 
 
 @app.route("/api/suggest-questions", methods=["GET"])
+@require_auth
 def suggest_questions():
     """
     Ask Gemini to suggest 4 smart questions based on the active dataset.
     Returns: { "questions": ["...", "...", "...", "..."] }
     """
+    state = _get_user_state()
     filename = state.active_file.get("filename")
     if not filename:
         return jsonify({"questions": []})
 
     try:
-        df = data_service.load_file(filename)
+        user_dir = _get_user_upload_dir()
+        df = data_service.load_file(filename, upload_dir=user_dir)
         cols_info = ", ".join([f"{c} ({df[c].dtype})" for c in df.columns[:15]])
 
         prompt = f"""Given a dataset with these columns: {cols_info}
@@ -297,6 +423,7 @@ def _error_response(message, status_code=500, error_type="server_error"):
     }), status_code
 
 @app.route("/api/chat", methods=["POST"])
+@require_auth
 def chat():
     """
     Send a message to Gemini for data analysis.
@@ -307,6 +434,7 @@ def chat():
     if not data or "message" not in data:
         return jsonify({"error": "No message provided"}), 400
 
+    state = _get_user_state()
     message = data["message"]
     filename = data.get("filename") or state.active_file.get("filename")
     skip_cache = data.get("skip_cache", False)
@@ -319,6 +447,8 @@ def chat():
         )
 
     try:
+        user_dir = _get_user_upload_dir()
+
         # Build cache key from message + filename
         cache_key = hashlib.md5(f"{filename}:{message}".encode()).hexdigest()
 
@@ -328,14 +458,14 @@ def chat():
             if cached_result:
                 cached_result = cached_result.copy()
                 cached_result["cached"] = True
-                _log_event("chat_cache_hit", filename=filename)
+                _log_event("chat_cache_hit", user_id=g.user_id, filename=filename)
                 return jsonify(cached_result)
 
         # Load the full dataset
-        df = data_service.load_file(filename)
+        df = data_service.load_file(filename, upload_dir=user_dir)
 
         # Get chat history
-        session_id = "default"  # Simple single-session approach
+        session_id = g.user_id
         history = state.chat_histories.get(session_id, [])
 
         # === Build context (cached per file) ===
@@ -474,29 +604,222 @@ def chat():
         )
 
 
+# ==============================================================
+# API: Chat (SSE Streaming)
+# ==============================================================
+
+def _sse_event(event, data):
+    """Format a single SSE event string."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.route("/api/chat/stream", methods=["POST"])
+@require_auth
+def chat_stream():
+    """
+    SSE streaming version of chat. Yields real-time phase updates.
+    Body: { "message": "...", "filename": "..." (optional), "skip_cache": false }
+    Events:
+      phase  → { "phase": "...", "message": "..." }
+      result → { full result JSON }
+      error  → { "error": "...", "text": "..." }
+      done   → {}
+    """
+    data = request.get_json()
+    if not data or "message" not in data:
+        return jsonify({"error": "No message provided"}), 400
+
+    # Capture auth context before entering the generator (Flask g is request-local)
+    user_id = g.user_id
+    state = session_mgr.get_state(user_id)
+    message = data["message"]
+    filename = data.get("filename") or state.active_file.get("filename")
+    skip_cache = data.get("skip_cache", False)
+
+    if not filename:
+        return jsonify({"error": "Please upload a dataset first!"}), 400
+
+    user_dir = os.path.join(data_service.UPLOAD_DIR, user_id)
+    os.makedirs(user_dir, exist_ok=True)
+
+    def generate():
+        try:
+            # --- Cache check ---
+            cache_key = hashlib.md5(f"{filename}:{message}".encode()).hexdigest()
+            if not skip_cache and cache_key in state.query_cache:
+                cached_result = state.query_cache.get(cache_key)
+                if cached_result:
+                    cached_result = cached_result.copy()
+                    cached_result["cached"] = True
+                    yield _sse_event("result", cached_result)
+                    yield _sse_event("done", {})
+                    return
+
+            # --- Load dataset ---
+            yield _sse_event("phase", {"phase": "loading", "message": "Loading dataset..."})
+            df = data_service.load_file(filename, upload_dir=user_dir)
+
+            session_id = user_id
+            history = state.chat_histories.get(session_id, [])
+
+            # --- Build context ---
+            schema_context_lean = state.get_cached(filename, "schema_lean")
+            if schema_context_lean is None:
+                schema_context_lean = data_service.get_schema_string(df, max_tokens=2000)
+                state.set_cached(filename, "schema_lean", schema_context_lean)
+
+            profile = state.get_cached(filename, "profile")
+            if profile is None:
+                profile = data_service.get_data_profile(df)
+                state.set_cached(filename, "profile", profile)
+            profile_context = data_service.get_profile_string(profile)
+
+            # --- Phase 0.5: Extraction ---
+            yield _sse_event("phase", {"phase": "extracting", "message": "Extracting relevant data..."})
+            extracted_data_context = None
+            try:
+                extraction_code, usage = gemini_service.generate_data_extraction_code(message, schema_context_lean)
+                _log_token_usage(usage, "Extraction")
+                if extraction_code:
+                    extracted_data = code_executor.execute_extraction_code(extraction_code, df)
+                    if isinstance(extracted_data, dict) and not extracted_data.get("error"):
+                        extracted_data_context = json.dumps(extracted_data, default=str)
+            except Exception as e:
+                _log_event("extraction_warning", error=str(e))
+
+            # --- Phase 1: Code Generation ---
+            yield _sse_event("phase", {"phase": "generating", "message": "Writing analysis code..."})
+            MAX_RETRIES = app_config.MAX_RETRIES
+            result = None
+            schema_context_full = state.get_cached(filename, "schema_full")
+            if schema_context_full is None:
+                schema_context_full = data_service.get_schema_string(df, max_tokens=15000)
+                state.set_cached(filename, "schema_full", schema_context_full)
+
+            history_capped = history[-app_config.CHAT_HISTORY_CAP:] if history else []
+            generated_code, usage = gemini_service.generate_analysis_code(
+                message, schema_context_full, history_capped, profile_context, extracted_data_context
+            )
+            _log_token_usage(usage, "Code Gen")
+
+            if generated_code:
+                for attempt in range(1 + MAX_RETRIES):
+                    code_to_run = generated_code if attempt == 0 else last_code
+                    if code_to_run is None:
+                        break
+
+                    # --- Phase 2: Code Execution ---
+                    attempt_label = "Initial" if attempt == 0 else f"Retry {attempt}/{MAX_RETRIES}"
+                    yield _sse_event("phase", {
+                        "phase": "executing",
+                        "message": f"Running analysis ({attempt_label})..."
+                    })
+
+                    exec_result = code_executor.execute_analysis_code(code_to_run, df)
+
+                    if not exec_result.get("error"):
+                        result = exec_result
+                        result["mode"] = "code_execution"
+
+                        # --- Phase 3: Interpretation ---
+                        yield _sse_event("phase", {"phase": "interpreting", "message": "Interpreting results..."})
+                        interpretation, usage = gemini_service.interpret_results(
+                            message, schema_context_full, exec_result, history_capped
+                        )
+                        _log_token_usage(usage, "Interpret")
+                        if interpretation:
+                            result["text"] = interpretation
+                        break
+                    else:
+                        error_msg = exec_result.get("text", "Unknown error")
+                        if attempt < MAX_RETRIES:
+                            yield _sse_event("phase", {
+                                "phase": "retrying",
+                                "message": f"Fixing code (attempt {attempt + 1})..."
+                            })
+                            last_code, usage = gemini_service.retry_analysis_code(
+                                message, schema_context_full, code_to_run, error_msg,
+                                profile_context, extracted_data_context
+                            )
+                            _log_token_usage(usage, "Retry")
+                            if not last_code:
+                                break
+                        else:
+                            break
+
+            # --- Fallback ---
+            if result is None:
+                yield _sse_event("phase", {"phase": "fallback", "message": "Using text-based analysis..."})
+                data_context = data_service.get_context_string(df, max_rows=5)
+                result = gemini_service.analyze_data(message, data_context, history_capped)
+                _log_token_usage(result.get("usage"), "Fallback")
+                if result.get("error"):
+                    yield _sse_event("error", {
+                        "error": True,
+                        "text": result.get("text", "AI service error.")
+                    })
+                    yield _sse_event("done", {})
+                    return
+                result["mode"] = "text_analysis"
+
+            result["cached"] = False
+
+            # Save to cache
+            state.query_cache.set(cache_key, result)
+
+            # Update chat history
+            history.append({"role": "user", "text": message, "chart": None, "table": None, "stats": None})
+            history.append({"role": "model", "text": result["text"], "chart": result.get("chart"),
+                            "table": result.get("table"), "stats": result.get("stats")})
+            state.chat_histories[session_id] = history
+            # Persist chat history
+            try:
+                chat_path = os.path.join(user_dir, "chat_history.json")
+                with open(chat_path, "w", encoding="utf-8") as f:
+                    json.dump(history[-50:], f, default=str)
+            except Exception:
+                pass
+
+            yield _sse_event("result", result)
+            yield _sse_event("done", {})
+
+        except FileNotFoundError:
+            yield _sse_event("error", {"error": True, "text": f"File '{filename}' not found. Please upload it again."})
+            yield _sse_event("done", {})
+        except Exception as e:
+            yield _sse_event("error", {"error": True, "text": f"Error analyzing data: {str(e)}"})
+            yield _sse_event("done", {})
+
+    return Response(generate(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+
 @app.route("/api/chat/history", methods=["GET"])
+@require_auth
 def get_chat_history():
     """Get the current chat history."""
-    session_id = "default"
+    state = _get_user_state()
+    session_id = g.user_id
     history = state.chat_histories.get(session_id, [])
     return jsonify({"history": history})
 
 
 @app.route("/api/chat/clear", methods=["POST"])
+@require_auth
 def clear_chat():
     """Clear chat history (memory + file) and reset active file."""
+    state = _get_user_state()
     state.chat_histories.clear()
-    state.active_file["filename"] = None  # Reset active file
+    state.active_file["filename"] = None
     state.clear_file_cache()
     try:
-        if os.path.exists(CHAT_HISTORY_PATH):
-            os.remove(CHAT_HISTORY_PATH)
+        path = _get_chat_history_path()
+        if os.path.exists(path):
+            os.remove(path)
     except Exception:
         pass
     return jsonify({"success": True})
-
-
-
 
 
 # ==============================================================
@@ -504,11 +827,13 @@ def clear_chat():
 # ==============================================================
 
 @app.route("/api/dashboard", methods=["GET"])
+@require_auth
 def get_dashboard():
     """Get the saved dashboard configuration (pinned charts)."""
     try:
-        if os.path.exists(DASHBOARD_CONFIG_PATH):
-            with open(DASHBOARD_CONFIG_PATH, "r", encoding="utf-8") as f:
+        path = _get_dashboard_config_path()
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
                 config = json.load(f)
             return jsonify(config)
         else:
@@ -518,6 +843,7 @@ def get_dashboard():
 
 
 @app.route("/api/dashboard", methods=["POST"])
+@require_auth
 def save_dashboard():
     """
     Save dashboard configuration.
@@ -528,8 +854,9 @@ def save_dashboard():
         return jsonify({"error": "No data provided"}), 400
 
     try:
-        data_service.ensure_upload_dir()
-        with open(DASHBOARD_CONFIG_PATH, "w", encoding="utf-8") as f:
+        path = _get_dashboard_config_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, default=str)
         return jsonify({"success": True})
     except Exception as e:
@@ -537,6 +864,7 @@ def save_dashboard():
 
 
 @app.route("/api/dashboard/pin", methods=["POST"])
+@require_auth
 def pin_chart():
     """
     Pin a single chart to the dashboard.
@@ -547,19 +875,15 @@ def pin_chart():
         return jsonify({"error": "No chart data provided"}), 400
 
     try:
-        # Load existing config (handle corrupt/legacy formats)
+        path = _get_dashboard_config_path()
         config = {"charts": []}
-        if os.path.exists(DASHBOARD_CONFIG_PATH):
-            with open(DASHBOARD_CONFIG_PATH, "r", encoding="utf-8") as f:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-            # Normalize: ensure it's a dict with a "charts" list
             if isinstance(loaded, dict) and "charts" in loaded:
                 config = loaded
             elif isinstance(loaded, list):
                 config = {"charts": loaded}
-            # else keep default
-
-        # Add new chart
 
         charts_list = config.get("charts", [])
         if not isinstance(charts_list, list):
@@ -574,9 +898,8 @@ def pin_chart():
         charts_list.append(new_chart)
         config["charts"] = charts_list
 
-        # Save
-        data_service.ensure_upload_dir()
-        with open(DASHBOARD_CONFIG_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, default=str)
 
         return jsonify({"success": True, "chart_id": new_chart["id"]})
@@ -586,18 +909,20 @@ def pin_chart():
 
 
 @app.route("/api/dashboard/remove/<chart_id>", methods=["DELETE"])
+@require_auth
 def remove_chart(chart_id):
     """Remove a chart from the dashboard by its ID."""
     try:
-        if not os.path.exists(DASHBOARD_CONFIG_PATH):
+        path = _get_dashboard_config_path()
+        if not os.path.exists(path):
             return jsonify({"error": "No dashboard config"}), 404
 
-        with open(DASHBOARD_CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
         config["charts"] = [c for c in config.get("charts", []) if c.get("id") != chart_id]
 
-        with open(DASHBOARD_CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, default=str)
 
         return jsonify({"success": True})
@@ -610,8 +935,73 @@ def remove_chart(chart_id):
 # Run
 # ==============================================================
 
+def _generate_self_signed_cert():
+    """Generate a self-signed SSL certificate for local HTTPS development."""
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import datetime
+
+    cert_path = os.path.join(BASE_DIR, app_config.SSL_CERT_PATH)
+    key_path = os.path.join(BASE_DIR, app_config.SSL_KEY_PATH)
+
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        return cert_path, key_path
+
+    os.makedirs(os.path.dirname(cert_path), exist_ok=True)
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Data Talk Dev"),
+    ])
+
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName("localhost"),
+                x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+            ]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+
+    with open(key_path, "wb") as f:
+        f.write(key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+
+    with open(cert_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+    logger.info("Generated self-signed SSL certificate at %s", cert_path)
+    return cert_path, key_path
+
+
 if __name__ == "__main__":
+    import ipaddress  # Lazy import for self-signed cert SAN
+
     data_service.ensure_upload_dir()
-    _load_chat_history()
-    _log_event("server_start", port=app_config.PORT, debug=app_config.DEBUG, upload_dir=data_service.UPLOAD_DIR)
-    app.run(debug=app_config.DEBUG, port=app_config.PORT)
+
+    ssl_context = None
+    protocol = "http"
+    if app_config.HTTPS_ENABLED:
+        cert_path, key_path = _generate_self_signed_cert()
+        ssl_context = (cert_path, key_path)
+        protocol = "https"
+
+    _log_event("server_start", port=app_config.PORT, debug=app_config.DEBUG,
+               protocol=protocol, upload_dir=data_service.UPLOAD_DIR)
+    app.run(debug=app_config.DEBUG, port=app_config.PORT, ssl_context=ssl_context)

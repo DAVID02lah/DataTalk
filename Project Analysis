@@ -174,10 +174,10 @@ graph TD
 
 | # | Area | Details | Location |
 |---|------|---------|----------|
-| 1 | **No Authentication** | `login.html` is purely cosmetic — any email/password redirects to `dashboard.html`. No sessions, tokens, JWT, or user management. All API endpoints are completely public. | `login.html` |
-| 2 | **Single-User Global State** | `AppState` is a singleton. `active_file`, `chat_histories`, and `query_cache` are global. Two concurrent users would overwrite each other's state, see each other's chats, and corrupt data. | `app_state.py` |
-| 3 | **Thread Safety Missing** | `QueryCache` and `AppState` have no locks. Flask's threaded mode (default) means concurrent requests cause race conditions on cache reads/writes and file state mutations. | `app_state.py` |
-| 4 | **No Persistent Storage** | Everything is in-memory. Server restart loses all cache. Chat history saves to flat JSON, but dashboard config and file computations vanish. No database. | `app_state.py`, `server.py` |
+| 1 | **No Authentication (Fixed)** | `login.html` now uses Supabase Auth with real signup/login. JWT tokens stored in localStorage. All API endpoints protected by `@require_auth` decorator. | `login.html`, `auth_service.py`, `server.py` |
+| 2 | **Single-User Global State (Fixed)** | `AppState` replaced with `SessionManager` — per-user `UserState` keyed by `user_id` from JWT. Thread-safe with `threading.Lock`. | `app_state.py` |
+| 3 | **Thread Safety Missing (Fixed)** | `QueryCache` and `SessionManager` now use `threading.Lock()` for all state access and mutations. | `app_state.py` |
+| 4 | **No Persistent Storage (Fixed)** | Supabase PostgreSQL database created with `profiles`, `chat_sessions`, `dashboard_configs` tables. RLS enabled. Per-user upload directories. | `server.py`, Supabase |
 | 5 | **File Cache Unbounded** | `_file_cache` in `AppState` has no eviction policy — grows indefinitely with each new file upload. On a long-running server, this causes OOM. | `app_state.py` |
 
 ### 6.2 Security Concerns
@@ -187,7 +187,7 @@ graph TD
 | 1 | **No Rate Limiting** | Chat and suggestion endpoints trigger expensive LLM calls. No throttling means easy API abuse/DOS. | `server.py` |
 | 2 | **No Prompt Injection Protection** | User questions are interpolated directly into LLM prompts. A crafted question could manipulate the system prompt, causing unintended code generation. | `gemini_service.py` |
 | 3 | **Sandbox Escape Risk** | While AST validation blocks known dangerous patterns, `__subclasses__()` chains and metaclass tricks are not fully blocked. A sufficiently crafted payload could potentially escape. | `code_executor.py` |
-| 4 | **No HTTPS** | Flask development server runs plain HTTP. Credentials (even fake ones) and API data transmitted in cleartext. | `server.py` |
+| 4 | **No HTTPS (Fixed)** | Flask server now supports HTTPS with self-signed certificates via `HTTPS_ENABLED=true` in `.env`. Auto-generates certs in `certs/` directory. | `server.py`, `app_config.py` |
 | 5 | **CDN Dependencies Without SRI** | 6 external libraries loaded from CDN without Subresource Integrity hashes. A compromised CDN could inject malicious code. | `dashboard.html` |
 | 6 | **Path Traversal Incomplete** | File path validation exists but `.` resolution not fully enforced in all paths. | `server.py` |
 | 7 | **No CORS Validation** | Malformed origins from env var accepted without validation. | `app_config.py` |
@@ -209,8 +209,8 @@ graph TD
 | 1 | **Zero Test Coverage** | No unit tests, integration tests, or end-to-end tests for any component. The sandbox, data parsing, and API endpoints are all untested. | Entire project |
 | 2 | **Silent Failures** | `gemini_service` returns `None` instead of raising exceptions. Backend errors are swallowed with `console.error()` on frontend — users don't know what failed. | `gemini_service.py`, all JS |
 | 3 | **Magic Numbers Everywhere (Fixed)** | History caps (5, 6 messages), timeouts (60s), token budgets, chart heights (340px, 380px, 420px), animation delays (100ms, 350ms, 2500ms) scattered with no documentation. | All files |
-| 4 | **Hardcoded `API_BASE`** | `API_BASE: "http://localhost:5000"` in JS. Won't work in any deployment scenario. | `js/core.js` |
-| 5 | **Hardcoded User Identity** | `"David Lee"` hardcoded in the dashboard UI. | `dashboard.html` |
+| 4 | **Hardcoded `API_BASE` (Fixed)** | Now uses `window.location.origin`. Works in any deployment. | `js/core.js` |
+| 5 | **Hardcoded User Identity (Fixed)** | User profile now dynamically populated from Supabase Auth session. | `dashboard.html`, `js/core.js` |
 | 6 | **No JSDoc / Docstrings** | Frontend functions have no documentation. Backend has minimal docstrings. Unclear parameter expectations. | All files |
 | 7 | **Inconsistent Error Handling** | `pinChart()` uses `alert()`, `refreshDashboard()` swallows errors silently, some endpoints return different error shapes. | `js/dashboard-ui.js`, `server.py` |
 | 8 | **Large Monolithic `chat()` Function** | The main chat endpoint handler is 144 lines — should be decomposed into pipeline stages. | `server.py` |
@@ -237,11 +237,11 @@ graph TD
 
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
-| 1 | **Add real authentication** — Implement Flask-Login or JWT. The login page already exists; add session management, password hashing (bcrypt), and route protection via decorators. | Security | Medium |
-| 2 | **Make state per-session** — Replace the `AppState` singleton with session-scoped state (Flask sessions + Redis, or per-user dict keyed by session ID). | Multi-user | Medium |
-| 3 | **Add thread-safe caching** — Use `threading.Lock()` or switch to `cachetools.LRUCache` with a lock. | Stability | Low |
+| 1 | **Add real authentication (Fixed)** — Implemented Supabase Auth with email/password signup, JWT verification, `@require_auth` decorator on all API routes. | Security | Medium |
+| 2 | **Make state per-session (Fixed)** — Replaced `AppState` singleton with `SessionManager` + per-user `UserState`. All state keyed by `user_id` from JWT. Thread-safe. | Multi-user | Medium |
+| 3 | **Add thread-safe caching (Fixed)** — `QueryCache` and `SessionManager` now use `threading.Lock()`. | Stability | Low |
 | 4 | **Add rate limiting** — Use `Flask-Limiter` on `/api/chat` and `/api/suggest-questions` (e.g., 10 requests/minute). | Security | Low |
-| 5 | **Make `API_BASE` dynamic** — Read from a `<meta>` tag set by server, or use relative URLs (`/api/...`). | Deployment | Low |
+| 5 | **Make `API_BASE` dynamic (Fixed)** — Changed to `window.location.origin` in `core.js`. Works in any deployment. | Deployment | Low |
 | 6 | **Add frontend request timeouts** — Use `AbortController` with 60s timeout on all fetch calls. | Reliability | Low |
 | 7 | **Validate file size client-side (Fixed)** — Check `file.size` before uploading and show a warning. Cap at 10MB to match server config. | UX | Low |
 
@@ -261,9 +261,9 @@ graph TD
 
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
-| 15 | **Add persistent database** — SQLite (for single-user) or PostgreSQL (multi-user) for chat history, user accounts, dashboard configs. | Persistence | High |
-| 16 | **Add HTTPS** — Use a reverse proxy (NGINX/Caddy) or `ssl_context` in Flask for production. | Security | Medium |
-| 17 | **Streaming responses** — Use SSE (Server-Sent Events) to stream Gemini responses token-by-token instead of blocking until complete. | UX | High |
+| 15 | **Add persistent database (Fixed)** — Supabase PostgreSQL with `profiles`, `chat_sessions`, `dashboard_configs` tables. RLS policies. Auto-profile trigger. | Persistence | High |
+| 16 | **Add HTTPS (Fixed)** — Self-signed cert support via `HTTPS_ENABLED=true`. Auto-generates certs. For production, reverse proxy recommended. | Security | Medium |
+| 17 | **Streaming responses (Fixed)** — SSE endpoint `/api/chat/stream` streams pipeline phases (extracting → generating → executing → interpreting) in real-time. Frontend typing indicator shows live server progress. | UX | High |
 | 18 | **Responsive design** — Add CSS breakpoints at 768px, 1024px, 1280px. Collapse sidebar to hamburger on mobile. Stack dashboard grid to 1 column. | Mobile | Medium |
 | 19 | **Accessibility pass** — Add ARIA labels to all icons, focus traps in modals, keyboard nav for drag-drop (arrow keys), Esc to close modals, skip links. | A11y | Medium |
 | 20 | **Process pool for execution** — Replace per-query subprocess spawning with a `ProcessPoolExecutor` to reuse workers. | Performance | Medium |
@@ -273,7 +273,7 @@ graph TD
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
 | 21 | **Export chat** — Allow exporting conversations as PDF or Markdown. | Feature | Medium |
-| 22 | **Dark mode** — CSS variables are already in place. Add a toggle and `prefers-color-scheme` media query. | UX | Low |
+| 22 | **Dark mode (Fixed)** — CSS variables + `[data-theme="dark"]` overrides across all 5 CSS files. Toggle button in top bar, localStorage persistence, `prefers-color-scheme` auto-detection. Handsontable dark scheme. | UX | Low |
 | 23 | **Multi-file analysis** — Allow cross-file joins and comparisons (e.g., "compare sales.csv with inventory.csv"). | Feature | High |
 | 24 | **Prompt injection guardrails** — Add input sanitization and output validation for LLM interactions. Detect and block prompt manipulation attempts. | Security | Medium |
 | 25 | **Undo for dashboard actions** — Toast with "Undo" button instead of immediate deletion. | UX | Low |
@@ -284,7 +284,7 @@ graph TD
 
 | File | Lines | Role | Health |
 |------|-------|------|--------|
-| `server.py` | ~500 | Flask router, multi-phase AI pipeline orchestrator | 🟡 Large `chat()` function, no auth middleware |
+| `server.py` | ~500 | Flask router, multi-phase AI pipeline orchestrator, auth middleware | 🟢 Auth via `@require_auth`, per-user state |
 | `gemini_service.py` | ~450 | LLM prompts, code gen, interpretation, extraction | 🟡 Silent None returns, prompt injection risk |
 | `data_service.py` | ~450 | Data loading, schema gen, profiling, statistics | 🟢 Solid, but O(n²) correlations |
 | `code_executor.py` | ~350 | Sandboxed execution with AST validation | 🟢 Good security, but subprocess overhead |

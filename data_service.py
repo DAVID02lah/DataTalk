@@ -18,12 +18,13 @@ def ensure_upload_dir():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-def save_uploaded_file(file_storage):
+def save_uploaded_file(file_storage, upload_dir=None):
     """
     Save a Flask FileStorage object to the uploads directory.
     Returns the filename and full path.
     """
-    ensure_upload_dir()
+    target_dir = upload_dir or UPLOAD_DIR
+    os.makedirs(target_dir, exist_ok=True)
     raw_filename = file_storage.filename or ""
     filename = secure_filename(raw_filename)
     if not filename:
@@ -33,25 +34,26 @@ def save_uploaded_file(file_storage):
     if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(f"Unsupported file type: {ext}")
 
-    filepath = _resolve_upload_path(filename)
+    filepath = _resolve_upload_path(filename, target_dir)
 
     # Avoid accidental overwrite by appending a numeric suffix.
     base_name, base_ext = os.path.splitext(filename)
     index = 1
     while os.path.exists(filepath):
         filename = f"{base_name}_{index}{base_ext}"
-        filepath = _resolve_upload_path(filename)
+        filepath = _resolve_upload_path(filename, target_dir)
         index += 1
 
     file_storage.save(filepath)
     return filename, filepath
 
 
-def load_file(filename):
+def load_file(filename, upload_dir=None):
     """
     Load a CSV or Excel file from the uploads directory into a pandas DataFrame.
     """
-    filepath = _resolve_upload_path(filename)
+    target_dir = upload_dir or UPLOAD_DIR
+    filepath = _resolve_upload_path(filename, target_dir)
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"File not found: {filename}")
 
@@ -407,14 +409,15 @@ def get_profile_string(profile):
     return "\n".join(lines)
 
 
-def list_uploaded_files():
+def list_uploaded_files(upload_dir=None):
     """Return a list of filenames in the uploads directory."""
-    ensure_upload_dir()
+    target_dir = upload_dir or UPLOAD_DIR
+    os.makedirs(target_dir, exist_ok=True)
     files = []
-    for f in os.listdir(UPLOAD_DIR):
+    for f in os.listdir(target_dir):
         ext = os.path.splitext(f)[1].lower()
         if ext in ALLOWED_EXTENSIONS:
-            filepath = _resolve_upload_path(f)
+            filepath = _resolve_upload_path(f, target_dir)
             files.append({
                 "filename": f,
                 "size_bytes": os.path.getsize(filepath)
@@ -422,17 +425,18 @@ def list_uploaded_files():
     return files
 
 
-def _resolve_upload_path(filename):
+def _resolve_upload_path(filename, upload_dir=None):
     """Resolve a filename under uploads and block path traversal."""
     if not filename:
         raise ValueError("Filename is required.")
 
+    target_dir = upload_dir or UPLOAD_DIR
     raw_name = str(filename)
     clean_name = os.path.basename(raw_name)
     if clean_name != raw_name:
         raise ValueError("Invalid file path.")
 
-    upload_root = os.path.realpath(UPLOAD_DIR)
+    upload_root = os.path.realpath(target_dir)
     candidate = os.path.realpath(os.path.join(upload_root, clean_name))
 
     if os.path.commonpath([upload_root, candidate]) != upload_root:

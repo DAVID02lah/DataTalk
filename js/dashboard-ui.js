@@ -17,7 +17,7 @@ async function pinChart(chartId, title) {
     try {
         const response = await fetch(`${App.API_BASE}/api/dashboard/pin`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
                 title: title || "Untitled Chart",
                 chart: {
@@ -68,7 +68,9 @@ function downloadChart(chartId) {
 // ============================================================
 async function fetchSmartQuestions() {
     try {
-        const response = await fetch(`${App.API_BASE}/api/suggest-questions`);
+        const response = await fetch(`${App.API_BASE}/api/suggest-questions`, {
+            headers: App.getAuthHeaders()
+        });
         const data = await response.json();
         const questions = data.questions || [];
         if (questions.length === 0) return;
@@ -199,7 +201,9 @@ document.addEventListener('keydown', function(event) {
 // ============================================================
 async function refreshDashboard() {
     try {
-        const response = await fetch(`${App.API_BASE}/api/dashboard`);
+        const response = await fetch(`${App.API_BASE}/api/dashboard`, {
+            headers: App.getAuthHeaders()
+        });
         const data = await response.json();
         App.state.dashboardCharts = data.charts || [];
         App.state.dashboardLoaded = true;
@@ -347,7 +351,7 @@ async function saveDashboardToBackend() {
     try {
         await fetch(`${App.API_BASE}/api/dashboard`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ charts: App.state.dashboardCharts }),
         });
     } catch (e) {
@@ -430,7 +434,10 @@ function initDashboardDragAndDrop() {
 // ============================================================
 async function removeDashChart(chartId) {
     try {
-        const resp = await fetch(`${App.API_BASE}/api/dashboard/remove/${chartId}`, { method: "DELETE" });
+        const resp = await fetch(`${App.API_BASE}/api/dashboard/remove/${chartId}`, {
+            method: "DELETE",
+            headers: App.getAuthHeaders()
+        });
         const data = await resp.json();
         if (data.success) {
             refreshDashboard();
@@ -460,7 +467,7 @@ async function clearAllCharts() {
     try {
         await fetch(`${App.API_BASE}/api/dashboard`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ charts: [] }),
         });
         refreshDashboard();

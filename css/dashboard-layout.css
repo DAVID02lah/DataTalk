@@ -4,6 +4,10 @@
     --ht-color-scheme: light;
 }
 
+[data-theme="dark"] {
+    --ht-color-scheme: dark;
+}
+
 :where(.ht-theme-main) {
     color-scheme: var(--ht-color-scheme) !important;
 }
@@ -23,7 +27,7 @@ body {
 /* Sidebar */
 .sidebar {
     width: 260px;
-    background: rgba(255, 255, 255, 0.8);
+    background: var(--surface-secondary);
     backdrop-filter: blur(20px);
     border-right: 1px solid var(--border-color);
     display: flex;
@@ -51,12 +55,12 @@ body {
 }
 
 .nav-item:hover {
-    background: rgba(0, 0, 0, 0.05);
+    background: var(--surface-hover);
     color: var(--text-color);
 }
 
 .nav-item.active {
-    background: rgba(66, 133, 244, 0.1);
+    background: var(--surface-active);
     color: var(--primary-color);
     border-left-color: var(--primary-color);
 }
@@ -113,7 +117,7 @@ body {
 .top-bar {
     height: 56px;
     border-bottom: 1px solid var(--border-color);
-    background: rgba(255, 255, 255, 0.7);
+    background: var(--surface-secondary);
     backdrop-filter: blur(12px);
     display: flex;
     align-items: center;
@@ -133,7 +137,7 @@ body {
     gap: 10px;
     padding: 4px 12px 4px 4px;
     border-radius: 24px;
-    background: rgba(0, 0, 0, 0.03);
+    background: var(--surface-hover);
     transition: background 0.2s;
 }
 
@@ -185,15 +189,15 @@ body {
     justify-content: center;
     text-align: center;
     color: var(--text-light);
-    border: 2px dashed rgba(66, 133, 244, 0.3);
+    border: 2px dashed var(--border-color);
     border-radius: 16px;
-    background: linear-gradient(135deg, rgba(66, 133, 244, 0.02) 0%, rgba(52, 168, 83, 0.02) 100%);
+    background: var(--surface-primary);
     transition: border-color 0.3s, background 0.3s;
 }
 
 .empty-state:hover {
     border-color: var(--primary-color);
-    background: linear-gradient(135deg, rgba(66, 133, 244, 0.05) 0%, rgba(52, 168, 83, 0.05) 100%);
+    background: var(--surface-active);
 }
 
 .empty-state h3 {
@@ -201,4 +205,3 @@ body {
     margin-bottom: 10px;
     margin-top: 20px;
 }
-

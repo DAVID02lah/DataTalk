@@ -122,7 +122,7 @@
 }
 
 .chat-msg-body code {
-    background: rgba(0, 0, 0, 0.06);
+    background: var(--code-bg);
     padding: 2px 6px;
     border-radius: 4px;
     font-size: 0.9em;
@@ -131,16 +131,16 @@
 /* Chart container in chat */
 .chat-chart-container {
     margin: 16px 0;
-    background: white;
+    background: var(--surface-primary);
     border: 1px solid var(--border-color);
     border-radius: 12px;
     padding: 16px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 2px 8px var(--shadow-color);
     transition: box-shadow 0.2s;
 }
 
 .chat-chart-container:hover {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 16px var(--shadow-color);
 }
 
 .chart-actions {
@@ -148,7 +148,7 @@
     gap: 8px;
     margin-top: 12px;
     padding-top: 12px;
-    border-top: 1px solid #f0f0f0;
+    border-top: 1px solid var(--chart-border-top);
 }
 
 .chart-action-btn {
@@ -231,7 +231,7 @@
 /* Chat input bar (bottom) */
 .chat-input-bar {
     padding: 16px 30px;
-    background: rgba(255, 255, 255, 0.85);
+    background: var(--surface-secondary);
     backdrop-filter: blur(10px);
     border-top: 1px solid var(--border-color);
 }
@@ -240,7 +240,7 @@
     display: flex;
     align-items: flex-end;
     gap: 10px;
-    background: white;
+    background: var(--input-bg);
     border: 1px solid var(--border-color);
     border-radius: 12px;
     padding: 8px 12px;
@@ -282,7 +282,7 @@
 }
 
 .chat-input-wrapper .tool-btn:hover {
-    background: rgba(0, 0, 0, 0.05);
+    background: var(--surface-hover);
     color: var(--text-color);
 }
 
@@ -323,7 +323,7 @@
 
 .suggestion-chip {
     padding: 8px 16px;
-    background: rgba(255, 255, 255, 0.6);
+    background: var(--surface-tertiary);
     border: 1px solid var(--border-color);
     border-radius: 20px;
     font-size: 0.88rem;
@@ -334,9 +334,8 @@
 }
 
 .suggestion-chip:hover {
-    background: white;
+    background: var(--surface-primary);
     border-color: var(--primary-color);
     color: var(--primary-color);
     transform: translateY(-1px);
 }
-

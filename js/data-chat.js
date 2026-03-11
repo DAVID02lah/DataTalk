@@ -66,7 +66,7 @@ async function handleFileUpload(files) {
     const MAX_SIZE_MB = 10;
     if (file.size > MAX_SIZE_MB * 1024 * 1024) {
         showUploadError(
-            document.getElementById("upload-container"), 
+            document.getElementById("upload-container"),
             `File size exceeds ${MAX_SIZE_MB}MB limit. Please upload a smaller dataset.`
         );
         return;
@@ -87,6 +87,7 @@ async function handleFileUpload(files) {
 
         const response = await fetch(`${App.API_BASE}/api/upload`, {
             method: "POST",
+            headers: App.getAuthHeaders(),
             body: formData,
         });
 
@@ -176,13 +177,17 @@ function updateSidebarFileInfo(filename, summary) {
 
 async function checkExistingFiles() {
     try {
-        const response = await fetch(`${App.API_BASE}/api/files`);
+        const response = await fetch(`${App.API_BASE}/api/files`, {
+            headers: App.getAuthHeaders()
+        });
         const data = await response.json();
         if (data.active && data.files.length > 0) {
             const file = data.files.find((f) => f.filename === data.active);
             if (file) {
                 // Fetch summary
-                const sumResp = await fetch(`${App.API_BASE}/api/data-summary/${encodeURIComponent(data.active)}`);
+                const sumResp = await fetch(`${App.API_BASE}/api/data-summary/${encodeURIComponent(data.active)}`, {
+                    headers: App.getAuthHeaders()
+                });
                 const sumData = await sumResp.json();
                 App.state.activeFile = { filename: data.active, summary: sumData.summary };
                 updateSidebarFileInfo(data.active, sumData.summary);
@@ -196,7 +201,9 @@ async function checkExistingFiles() {
 
                     // Fetch full data for the grid instead of using the 5-row preview
                     try {
-                        const fullDataResp = await fetch(`${App.API_BASE}/api/data/${encodeURIComponent(data.active)}`);
+                        const fullDataResp = await fetch(`${App.API_BASE}/api/data/${encodeURIComponent(data.active)}`, {
+                            headers: App.getAuthHeaders()
+                        });
                         if (fullDataResp.ok) {
                             const fullData = await fullDataResp.json();
                             loadGrid(fullData.data);
@@ -244,9 +251,9 @@ async function sendMessage(skipCache = false) {
     showTypingIndicator();
 
     try {
-        const response = await fetch(`${App.API_BASE}/api/chat`, {
+        const response = await fetch(`${App.API_BASE}/api/chat/stream`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
                 message: message,
                 filename: App.state.activeFile ? App.state.activeFile.filename : null,
@@ -254,15 +261,61 @@ async function sendMessage(skipCache = false) {
             }),
         });
 
-        const result = await response.json();
+        if (!response.ok) {
+            // Non-streaming error (e.g. 400/401)
+            const errData = await response.json().catch(() => ({}));
+            hideTypingIndicator();
+            appendErrorMessage(errData.text || errData.error || "An unexpected error occurred.");
+            return;
+        }
+
+        // Consume the SSE stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult = null;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            // Keep the last (possibly incomplete) line in the buffer
+            buffer = lines.pop() || "";
+
+            let currentEvent = null;
+            for (const line of lines) {
+                if (line.startsWith("event: ")) {
+                    currentEvent = line.slice(7).trim();
+                } else if (line.startsWith("data: ") && currentEvent) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        if (currentEvent === "phase") {
+                            updateTypingPhase(data.message || data.phase);
+                        } else if (currentEvent === "result") {
+                            finalResult = data;
+                        } else if (currentEvent === "error") {
+                            hideTypingIndicator();
+                            appendErrorMessage(data.text || "An error occurred.");
+                            return;
+                        }
+                        // "done" event — loop will end when stream closes
+                    } catch (e) {
+                        console.warn("SSE parse error:", e);
+                    }
+                    currentEvent = null;
+                }
+            }
+        }
+
         hideTypingIndicator();
 
-        if (!response.ok || result.error) {
-            appendErrorMessage(result.text || "An unexpected error occurred. Please try again.");
+        if (finalResult) {
+            appendChatMessage("ai", finalResult.text, finalResult.chart, finalResult.table,
+                finalResult.stats, finalResult.followup, finalResult.cached, message);
         } else {
-            // Add AI message with all data
-            appendChatMessage("ai", result.text, result.chart, result.table, result.stats,
-                result.followup, result.cached, message);
+            appendErrorMessage("No response received from the server.");
         }
 
     } catch (error) {
@@ -299,7 +352,9 @@ function showChatMessages() {
 // ============================================================
 async function loadChatHistory() {
     try {
-        const response = await fetch(`${App.API_BASE}/api/chat/history`);
+        const response = await fetch(`${App.API_BASE}/api/chat/history`, {
+            headers: App.getAuthHeaders()
+        });
         const data = await response.json();
         const history = data.history || [];
 
@@ -320,7 +375,7 @@ async function loadChatHistory() {
 
 async function clearChatHistory() {
     try {
-        await fetch(`${App.API_BASE}/api/chat/clear`, { method: "POST" });
+        await fetch(`${App.API_BASE}/api/chat/clear`, { method: "POST", headers: App.getAuthHeaders() });
         // Clear the UI
         const container = document.getElementById("chat-messages");
         if (container) container.innerHTML = "";
@@ -636,6 +691,16 @@ function showTypingIndicator() {
     `;
     container.appendChild(indicator);
     container.scrollTop = container.scrollHeight;
+}
+
+function updateTypingPhase(phaseText) {
+    const el = document.querySelector("#typing-indicator .typing-progress-text");
+    if (el && phaseText) {
+        el.classList.remove("phase-change");
+        void el.offsetWidth; // Force reflow for animation restart
+        el.textContent = phaseText;
+        el.classList.add("phase-change");
+    }
 }
 
 function hideTypingIndicator() {

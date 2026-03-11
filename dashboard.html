@@ -46,20 +46,31 @@
 
             <nav class="sidebar-nav">
                 <div class="nav-item" onclick="switchView('data')">
-                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>
+                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <ellipse cx="12" cy="5" rx="9" ry="3" />
+                        <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />
+                        <path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3" />
                     </svg>
                     Data Connector
                 </div>
                 <div class="nav-item active" onclick="switchView('chat')">
-                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                     </svg>
                     Chat Analysis
                 </div>
                 <div class="nav-item" onclick="switchView('visuals')">
-                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7" rx="1" />
+                        <rect x="14" y="3" width="7" height="7" rx="1" />
+                        <rect x="3" y="14" width="7" height="7" rx="1" />
+                        <rect x="14" y="14" width="7" height="7" rx="1" />
                     </svg>
                     Visualisations
                 </div>
@@ -73,14 +84,22 @@
 
             <div class="sidebar-footer">
                 <div class="nav-item" onclick="clearChatHistory()">
-                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M3 6h18" />
+                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
                     </svg>
                     Clear Chat
                 </div>
-                <div class="nav-item" onclick="window.location.href='index.html'">
-                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                <div class="nav-item" id="sign-out-btn">
+                    <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
                     </svg>
                     Sign Out
                 </div>
@@ -91,9 +110,15 @@
         <main class="main-content">
             <header class="top-bar">
                 <div class="page-title" id="page-title">Chat Analysis</div>
-                <div class="user-profile">
-                    <div class="user-avatar">DL</div>
-                    <span class="user-name">David Lee</span>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button id="theme-toggle-btn" onclick="App.toggleTheme()" title="Toggle dark mode"
+                        style="background: none; border: 1px solid var(--border-color); border-radius: 20px; padding: 4px 12px; cursor: pointer; font-size: 1.1rem; transition: all 0.2s; display: flex; align-items: center;">
+                        🌙
+                    </button>
+                    <div class="user-profile">
+                        <div class="user-avatar">?</div>
+                        <span class="user-name">User</span>
+                    </div>
                 </div>
             </header>
 
@@ -102,8 +127,12 @@
                 <div id="view-data" class="view-section">
                     <div id="upload-success-banner" style="display: none;"></div>
                     <div id="upload-container" class="empty-state">
-                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#4285f4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.4; margin-bottom: 8px;">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="48" height="48"
+                            viewBox="0 0 24 24" fill="none" stroke="#4285f4" stroke-width="1.5" stroke-linecap="round"
+                            stroke-linejoin="round" style="opacity: 0.4; margin-bottom: 8px;">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
                         </svg>
                         <h3>Upload Dataset</h3>
                         <p>Drag and drop your CSV or Excel file here to begin.</p>
@@ -153,19 +182,20 @@
                             <div class="chat-input-wrapper">
                                 <button class="tool-btn" onclick="document.getElementById('file-input').click()"
                                     title="Attach File" aria-label="Attach File">
-                                    <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round">
+                                    <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round">
                                         <path
                                             d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />
                                     </svg>
                                 </button>
-                                <textarea id="chat-input" placeholder="Ask a question about your data..."
-                                    rows="1" aria-label="Ask a question about your data"></textarea>
-                                <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send" aria-label="Send Message">
-                                    <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
-                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round">
+                                <textarea id="chat-input" placeholder="Ask a question about your data..." rows="1"
+                                    aria-label="Ask a question about your data"></textarea>
+                                <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send"
+                                    aria-label="Send Message">
+                                    <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round">
                                         <path d="m5 12 7-7 7 7" />
                                         <path d="M12 19V5" />
                                     </svg>
@@ -186,7 +216,8 @@
                             </div>
                             <div class="dashboard-controls">
                                 <button class="btn-dash-action" onclick="refreshDashboard()">Refresh</button>
-                                <button class="btn-dash-action btn-dash-danger" onclick="clearAllCharts()">Clear All</button>
+                                <button class="btn-dash-action btn-dash-danger" onclick="clearAllCharts()">Clear
+                                    All</button>
                             </div>
                         </div>
 
@@ -195,11 +226,18 @@
 
                         <!-- Empty State -->
                         <div class="dashboard-empty" id="dashboard-empty" style="display: none;">
-                            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.25; margin-bottom: 8px;">
-                                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+                            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="48" height="48"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                                stroke-linecap="round" stroke-linejoin="round"
+                                style="opacity: 0.25; margin-bottom: 8px;">
+                                <rect x="3" y="3" width="7" height="7" rx="1" />
+                                <rect x="14" y="3" width="7" height="7" rx="1" />
+                                <rect x="3" y="14" width="7" height="7" rx="1" />
+                                <rect x="14" y="14" width="7" height="7" rx="1" />
                             </svg>
                             <h3>No Charts Pinned Yet</h3>
-                            <p>Go to <strong>Chat Analysis</strong>, ask a question that generates a chart, then click <strong>"Pin to Dashboard"</strong> to add it here.</p>
+                            <p>Go to <strong>Chat Analysis</strong>, ask a question that generates a chart, then click
+                                <strong>"Pin to Dashboard"</strong> to add it here.</p>
                         </div>
                     </div>
                 </div>
@@ -208,9 +246,11 @@
     </div>
 
     <!-- Fullscreen Chart Modal -->
-    <div class="chart-fullscreen-overlay" id="chart-fullscreen-overlay" onclick="closeFullscreen(event)" role="dialog" aria-modal="true" aria-label="Fullscreen Chart">
+    <div class="chart-fullscreen-overlay" id="chart-fullscreen-overlay" onclick="closeFullscreen(event)" role="dialog"
+        aria-modal="true" aria-label="Fullscreen Chart">
         <div class="chart-fullscreen-container">
-            <button class="close-fullscreen" onclick="closeFullscreenChart()" aria-label="Close Fullscreen Chart">×</button>
+            <button class="close-fullscreen" onclick="closeFullscreenChart()"
+                aria-label="Close Fullscreen Chart">×</button>
             <div id="fullscreen-chart"></div>
         </div>
     </div>
