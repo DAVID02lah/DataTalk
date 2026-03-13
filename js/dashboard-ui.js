@@ -134,6 +134,7 @@ function openFullscreenChart(chartId) {
         template: "plotly_white",
         font: { family: "Inter, sans-serif" },
         autosize: true,
+        width: null,
         margin: { l: 60, r: 40, t: 60, b: 60 },
     };
 
@@ -153,7 +154,7 @@ function closeFullscreenChart() {
     const overlay = document.getElementById("chart-fullscreen-overlay");
     overlay.classList.remove("visible");
     Plotly.purge("fullscreen-chart");
-    
+
     // Return focus to the original active element if we stored it, or just body
     document.body.focus();
 }
@@ -166,7 +167,7 @@ function closeFullscreen(event) {
 }
 
 // Global Keyboard Accessibility for Modals
-document.addEventListener('keydown', function(event) {
+document.addEventListener('keydown', function (event) {
     const overlay = document.getElementById("chart-fullscreen-overlay");
     if (!overlay || !overlay.classList.contains("visible")) return;
 
@@ -177,7 +178,7 @@ document.addEventListener('keydown', function(event) {
 
     if (event.key === "Tab") {
         const focusableElements = overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
-        
+
         // Plotly might inject elements, so we query dynamically
         const firstFocusableElement = focusableElements[0];
         const lastFocusableElement = focusableElements[focusableElements.length - 1];
@@ -302,8 +303,8 @@ function renderDashboardGrid() {
                     template: "plotly_white",
                     font: { family: "Inter, sans-serif" },
                     autosize: true,
-                    width: undefined, // Fix: Reset width to force responsiveness
-                    title: "",        // Fix: Remove internal title (already in header)
+                    width: null,
+                    title: "",
                     margin: { l: 40, r: 40, t: 30, b: 40 },
                     height: colSpan === 3 ? CONFIG.CHART_HEIGHT_3_COL : CONFIG.CHART_HEIGHT_1_COL,
                 };

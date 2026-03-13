@@ -480,6 +480,7 @@ function mountPlotlyChart(chartId, chartJson) {
                 template: "plotly_white",
                 font: { family: "Inter, sans-serif" },
                 autosize: true,
+                width: null,
                 margin: { l: 50, r: 30, t: 50, b: 50 },
             };
             Plotly.newPlot(chartId, chartJson.data, layout, {
