@@ -74,6 +74,19 @@ def _get_user_state():
     """Get the per-user state for the current authenticated request."""
     return session_mgr.get_state(g.user_id)
 
+def _get_dataframe(filename, user_id, state):
+    """Get the dataframe from cache or load it from storage."""
+    df = state.get_cached(filename, "df")
+    if df is not None:
+        _log_event("dataframe_cache_hit", user_id=user_id, filename=filename)
+        return df
+
+    _log_event("dataframe_cache_miss", user_id=user_id, filename=filename)
+    df = data_service.load_file(filename, user_id=user_id)
+    state.set_cached(filename, "df", df)
+    return df
+
+
 
 # Removed local path helpers as we use Supabase now
 
@@ -262,16 +275,16 @@ def upload_file():
 
     try:
         filename, _ = data_service.save_uploaded_file(file, user_id=g.user_id)
-        df = data_service.load_file(filename, user_id=g.user_id)
-        summary = data_service.get_summary(df)
-
         state = _get_user_state()
+        df = _get_dataframe(filename, user_id=g.user_id, state=state)
+        summary = data_service.get_summary(df)
         state.active_file["filename"] = filename
 
         # Reset chat history and query cache for new file
         state.chat_histories.clear()
         state.query_cache.clear()
         state.clear_file_cache()
+        state.set_cached(filename, "df", df)
 
         _log_event("file_uploaded", user_id=g.user_id, filename=filename,
                     rows=summary["shape"]["rows"], cols=summary["shape"]["columns"])
@@ -300,7 +313,8 @@ def list_files():
 def data_summary(filename):
     """Get summary stats for a specific uploaded file."""
     try:
-        df = data_service.load_file(filename, user_id=g.user_id)
+        state = _get_user_state()
+        df = _get_dataframe(filename, user_id=g.user_id, state=state)
         summary = data_service.get_summary(df)
         return jsonify({"filename": filename, "summary": summary})
     except FileNotFoundError:
@@ -314,7 +328,8 @@ def data_summary(filename):
 def get_full_data(filename):
     """Get the full dataset for the data connector."""
     try:
-        df = data_service.load_file(filename, user_id=g.user_id)
+        state = _get_user_state()
+        df = _get_dataframe(filename, user_id=g.user_id, state=state)
         data = [df.columns.tolist()] + df.fillna("").values.tolist()
         return jsonify({"filename": filename, "data": data})
     except FileNotFoundError:
@@ -336,7 +351,7 @@ def suggest_questions():
         return jsonify({"questions": []})
 
     try:
-        df = data_service.load_file(filename, user_id=g.user_id)
+        df = _get_dataframe(filename, user_id=g.user_id, state=state)
         cols_info = ", ".join([f"{c} ({df[c].dtype})" for c in df.columns[:15]])
 
         prompt = f"""Given a dataset with these columns: {cols_info}
@@ -449,7 +464,7 @@ def chat():
                 return jsonify(cached_result)
 
         # Load the full dataset from Supabase
-        df = data_service.load_file(filename, user_id=g.user_id)
+        df = _get_dataframe(filename, user_id=g.user_id, state=state)
 
         # Get chat history
         session_id = g.user_id
@@ -641,7 +656,7 @@ def chat_stream():
 
             # --- Load dataset ---
             yield _sse_event("phase", {"phase": "loading", "message": "Loading dataset..."})
-            df = data_service.load_file(filename, user_id=user_id)
+            df = _get_dataframe(filename, user_id=user_id, state=state)
 
             session_id = user_id
             history = state.chat_histories.get(session_id, [])
