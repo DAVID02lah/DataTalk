@@ -1,37 +1,48 @@
 # Data Talk — Project Analysis
 
+> **Generated:** 2026-03-14 | **Total LOC:** ~6,658 (2,552 backend + 4,106 frontend) across 21 source files
+
+---
+
 ## 1. Architecture Overview
 
 ```mermaid
 graph LR
     subgraph Frontend ["Frontend (Vanilla HTML/JS/CSS)"]
-        A[index.html<br>Landing Page] -->|Navigate| B[login.html<br>Login UI Only]
-        B -->|Redirect| C[dashboard.html<br>Main SPA]
-        C --> C1[core.js<br>State & Particles]
-        C --> C2[data-chat.js<br>Upload & Chat]
-        C --> C3[dashboard-ui.js<br>Dashboard Grid]
+        A[index.html<br>Landing Page] -->|Navigate| B[login.html<br>Supabase Auth]
+        B -->|JWT Redirect| C[dashboard.html<br>Main SPA]
+        C --> C0[constants.js<br>Config Values]
+        C --> C1[core.js<br>State, Auth & Particles]
+        C --> C2[data-chat.js<br>Upload, Chat & SSE]
+        C --> C3[dashboard-ui.js<br>Dashboard Grid & D&D]
     end
 
     subgraph Backend ["Backend (Flask / Python)"]
-        D[server.py<br>REST API Router]
+        D[server.py<br>REST API + SSE Router]
         D --> E[gemini_service.py<br>LLM Orchestration]
         D --> F[data_service.py<br>Data Loading & Profiling]
         D --> G[code_executor.py<br>Sandboxed Execution]
-        D --> H[app_state.py<br>Cache & State]
+        D --> H[app_state.py<br>Session & Cache Mgmt]
         D --> I[app_config.py<br>Environment Config]
+        D --> M[auth_service.py<br>JWT & Auth Decorator]
     end
 
     subgraph External ["External Services"]
-        J[Google Gemini<br>3.1 Flash Lite]
+        J[Google Gemini<br>3.1 Flash Lite Preview]
+        K[Supabase<br>Auth + Storage + Postgres]
     end
 
-    C2 -->|REST API| D
+    C2 -->|REST + SSE| D
     C3 -->|REST API| D
+    B -->|Auth API| K
     E -->|API Call| J
-    G -->|Subprocess| K[Isolated Python<br>Process]
+    M -->|Verify JWT| K
+    F -->|File Storage| K
+    D -->|DB Queries| K
+    G -->|Subprocess| L[Isolated Python<br>Process]
 ```
 
-A vanilla HTML/JS frontend talks to a Flask backend (Python). The backend orchestrates a multi-phase AI pipeline: extract → generate code → execute in sandbox → interpret results.
+A vanilla HTML/JS frontend communicates with a Flask backend (Python). The backend orchestrates a multi-phase AI pipeline: **extract → generate code → execute in sandbox → interpret results**. Authentication, file storage, and persistent data are handled by **Supabase** (Auth, Storage, PostgreSQL). LLM operations use the **Google Gemini 3.1 Flash Lite Preview** model.
 
 ---
 
@@ -40,8 +51,12 @@ A vanilla HTML/JS frontend talks to a Flask backend (Python). The backend orches
 ```mermaid
 flowchart TD
     START([User Opens App]) --> IDX[index.html<br>Landing Page]
-    IDX -->|Click Sign In| LOGIN[login.html<br>Cosmetic Login]
-    LOGIN -->|Any Email/Pass| DASH[dashboard.html<br>Main SPA Loads]
+    IDX -->|Click Sign In| LOGIN[login.html<br>Supabase Auth]
+    LOGIN -->|Sign Up| SIGNUP[Supabase Email/Password<br>+ Email Confirmation]
+    LOGIN -->|Sign In| AUTH[JWT Tokens Issued<br>Stored in localStorage]
+    SIGNUP --> AUTH
+    AUTH -->|Redirect| DASH[dashboard.html<br>Main SPA Loads]
+    DASH -->|Session Check| REHYDRATE[Rehydrate User State<br>from Supabase DB]
 
     DASH --> NAV{User Action?}
 
@@ -50,50 +65,53 @@ flowchart TD
     NAV -->|View Dashboard| DBRD
 
     subgraph UPLOAD ["File Upload Flow"]
-        U1[Drag & Drop or Click<br>CSV / XLSX / XLS] --> U2[POST /api/upload<br>Validates type & size]
-        U2 --> U3[data_service.save_uploaded_file<br>Save to /uploads with collision avoidance]
-        U3 --> U4[data_service.load_file<br>Parse into Pandas DataFrame]
-        U4 --> U5[Set as Active File<br>in AppState singleton]
+        U1[Drag & Drop or Click<br>CSV / XLSX / XLS] --> U1B[Client Validation<br>10MB limit + extension check]
+        U1B --> U2[POST /api/upload<br>with Bearer JWT]
+        U2 --> U3[data_service.save_uploaded_file<br>Upload to Supabase Storage]
+        U3 --> U4[data_service.load_file<br>Download & Parse into DataFrame]
+        U4 --> U5[Set as Active File<br>in UserState per user_id]
         U5 --> U6[GET /api/data<br>Load into Handsontable Grid]
-        U5 --> U7[POST /api/suggest-questions<br>Gemini generates 4 smart questions]
+        U5 --> U7[GET /api/suggest-questions<br>Gemini generates 4 smart questions]
         U6 --> U8[Data Connector View<br>Shows Interactive Grid]
         U7 --> U9[Chat View<br>Shows Suggestion Chips]
     end
 
-    subgraph CHAT ["Chat Analysis Pipeline"]
+    subgraph CHAT ["Chat Analysis Pipeline (SSE Streaming)"]
         direction TB
-        C1[User Types Question] --> C2[POST /api/chat<br>with filename + message]
+        C1[User Types Question] --> C2[POST /api/chat/stream<br>with Bearer JWT + filename + message]
         C2 --> C3{Cache Hit?<br>MD5 hash lookup}
         C3 -->|Yes| C12[Return Cached Result<br>with cached badge]
 
-        C3 -->|No| C4["Phase 0.5: Data Extraction<br>gemini_service.generate_data_extraction_code()"]
+        C3 -->|No| C4["Phase 0.5: Data Extraction<br>gemini_service.generate_data_extraction_code()<br>→ SSE: event=phase"]
         C4 --> C5["code_executor.execute_extraction_code()<br>Extract unique values from categorical columns"]
 
-        C5 --> C6["Phase 1: Code Generation<br>data_service.get_schema_string() → rich context<br>data_service.get_data_profile() → dataset type<br>gemini_service.generate_analysis_code() → pandas code"]
+        C5 --> C6["Phase 1: Code Generation<br>data_service.get_schema_string() → rich context<br>data_service.get_data_profile() → dataset type<br>gemini_service.generate_analysis_code() → pandas code<br>→ SSE: event=phase"]
 
         C6 --> C7["code_executor.execute_analysis_code()<br>Subprocess with 60s timeout + AST validation"]
 
         C7 --> C8{Execution<br>Success?}
-        C8 -->|Yes| C10["Phase 2: Interpretation<br>gemini_service.interpret_results()<br>Send computed results → get natural language explanation"]
+        C8 -->|Yes| C10["Phase 2: Interpretation<br>gemini_service.interpret_results()<br>Send computed results → natural language<br>→ SSE: event=phase"]
         C8 -->|No| C9{Retries Left?<br>MAX_RETRIES = 2}
         C9 -->|Yes| C6B["gemini_service.retry_analysis_code()<br>Feed error message back to LLM"]
         C6B --> C7
         C9 -->|No| C11["Phase 3: Fallback<br>gemini_service.analyze_data()<br>Text-only analysis without code execution"]
 
-        C10 --> C12B[Cache Result<br>MD5 key → LRU cache]
+        C10 --> C12B["Cache Result<br>MD5 key → per-user LRU cache<br>→ SSE: event=result"]
         C11 --> C12B
-        C12B --> C13[Render in Chat<br>Markdown + Plotly charts + tables + stats]
-        C12 --> C13
-        C13 --> C14[Generate Follow-up Suggestions]
+        C12B --> C13[Save to Supabase chat_sessions]
+        C12 --> C14[Render in Chat<br>Markdown + Plotly charts + tables + stats]
+        C13 --> C14
+        C14 --> C15[Generate Follow-up Suggestions]
     end
 
     subgraph DBRD ["Dashboard Flow"]
-        D1[Pin Chart from Chat] --> D2[POST /api/dashboard/pin<br>Save Plotly data + layout]
+        D1[Pin Chart from Chat] --> D2[POST /api/dashboard/pin<br>Save Plotly data + layout to Supabase]
         D2 --> D3[Dashboard Grid<br>3-column CSS Grid]
         D3 --> D4[Drag & Drop Reorder]
         D3 --> D5[Resize: 1, 2, or 3 columns]
         D3 --> D6[Download PNG / Remove]
         D3 --> D7[Fullscreen Expand]
+        D3 --> D8[Save Layout to Supabase<br>dashboard_configs table]
     end
 
     style UPLOAD fill:#e8f5e9,stroke:#4caf50
@@ -107,18 +125,21 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    CODE[LLM-Generated<br>Python Code] --> AST[AST Parsing<br>& Validation]
-    AST -->|Blocked| REJECT[❌ Rejected<br>Unsafe code detected]
-    AST -->|Passed| SUB[Subprocess<br>Isolation]
+    CODE[LLM-Generated<br>Python Code] --> LEN{Code Length<br>≤ 10,000 chars?}
+    LEN -->|No| REJECT1[Rejected<br>Code too long]
+    LEN -->|Yes| AST[AST Parsing<br>& Validation]
+    AST -->|Blocked| REJECT[Rejected<br>Unsafe code detected]
+    AST -->|Passed| SUB[Subprocess<br>Isolation via spawn]
     SUB --> SAFE["Safe Globals Only:<br>pandas, numpy, math,<br>json, datetime, re,<br>statistics, collections"]
     SAFE --> TIMEOUT["60s Timeout Guard"]
-    TIMEOUT -->|Success| RESULT[Normalized Results<br>tables, charts, text, stats]
-    TIMEOUT -->|Timeout| FAIL[❌ TimeoutError]
+    TIMEOUT -->|Success| NORM[Normalize Results<br>tables, charts, text, stats]
+    NORM --> CONVERT[Deep Convert<br>numpy/pandas → native Python]
+    TIMEOUT -->|Timeout| FAIL[TimeoutError]
 
     subgraph Blocked ["Blocked by AST Validator"]
-        B1["Builtins: open, eval, exec,<br>__import__, exit, input"]
-        B2["Modules: os, sys, subprocess,<br>socket, pathlib, shutil"]
-        B3["Attributes: __class__, __dict__,<br>__globals__, system, popen"]
+        B1["Builtins (19): open, eval, exec,<br>compile, __import__, globals,<br>locals, getattr, setattr, delattr,<br>breakpoint, exit, quit, input,<br>memoryview, classmethod,<br>staticmethod, property, super"]
+        B2["Modules (9): os, sys, subprocess,<br>socket, pathlib, shutil,<br>builtins, importlib, ctypes"]
+        B3["Attributes (14): __class__, __bases__,<br>__dict__, __mro__, __subclasses__,<br>__globals__, __getattribute__,<br>__code__, __closure__, __func__,<br>system, popen, remove, unlink"]
     end
 ```
 
@@ -133,16 +154,20 @@ graph TD
     SPA --> TOP[Top Bar<br>56px]
     SPA --> MAIN[Main Content Area]
 
-    SIDE --> NAV1["📊 Data Connector"]
-    SIDE --> NAV2["💬 Chat Analysis"]
-    SIDE --> NAV3["📈 Visualisations"]
+    SIDE --> NAV1["Data Connector"]
+    SIDE --> NAV2["Chat Analysis"]
+    SIDE --> NAV3["Visualisations"]
     SIDE --> FINFO[File Info Panel]
     SIDE --> CLEAR[Clear Chat / Sign Out]
 
-    MAIN --> VIEW1["Data Connector View<br>─ Upload Zone drag/drop<br>─ Handsontable Grid<br>─ Data Preview Panel"]
-    MAIN --> VIEW2["Chat View<br>─ Hero empty state<br>─ Messages Container<br>─ Typing Indicator<br>─ Input Bar + Suggestions"]
-    MAIN --> VIEW3["Visualisations View<br>─ Dashboard Grid 3-col<br>─ Pinned Charts<br>─ Drag & Drop + Resize"]
-    MAIN --> MODAL["Fullscreen Chart Modal"]
+    TOP --> TITLE[Page Title]
+    TOP --> THEME[Dark/Light Toggle]
+    TOP --> PROFILE[User Profile Pill<br>from Supabase Auth]
+
+    MAIN --> VIEW1["Data Connector View<br>— Upload Zone drag/drop<br>— Client-side 10MB validation<br>— Handsontable Grid<br>— Data Preview Panel"]
+    MAIN --> VIEW2["Chat View<br>— Hero empty state<br>— SSE Streaming Messages<br>— Real-time Phase Updates<br>— Typing Indicator<br>— Input Bar + Suggestions"]
+    MAIN --> VIEW3["Visualisations View<br>— Dashboard Grid 3-col<br>— Pinned Charts from Supabase<br>— Drag & Drop + Resize<br>— Download PNG / Remove"]
+    MAIN --> MODAL["Fullscreen Chart Modal<br>— Focus Trap<br>— Escape to Close<br>— aria-modal=true"]
 
     NAV1 -->|switchView| VIEW1
     NAV2 -->|switchView| VIEW2
@@ -156,15 +181,19 @@ graph TD
 | # | Area | Details |
 |---|------|---------|
 | 1 | **Intelligent Multi-Phase Pipeline** | The 4-phase approach (extraction → code gen → execution → interpretation) is architecturally excellent. Instead of asking the LLM to analyze raw data (expensive and inaccurate), it generates executable pandas code, runs it in a sandbox, then has Gemini interpret computed results. This produces more accurate analyses at lower token cost. |
-| 2 | **Sandbox Security (Defense-in-Depth)** | `code_executor.py` implements 4 layers: AST-based static analysis via `_SafetyVisitor`, blocked builtins/imports whitelist, subprocess isolation, and a 60-second timeout. This is a well-thought-out defense-in-depth model against LLM-generated malicious code. |
-| 3 | **Smart Data Profiling** | `data_service.py` auto-detects dataset types (survey, time series, transactional, geographic, etc.) and generates domain-specific analysis suggestions. This provides the LLM with richer context, significantly improving output quality compared to generic prompts. |
-| 4 | **Token-Efficient Context Building** | Schema context is dynamically sized with a `max_tokens` budget. Correlations are computed locally, only metadata (not raw data) is sent to the LLM. The extraction phase pulls out unique categorical values so the code generator knows exact column names — prevents hallucinated column references. |
-| 5 | **Graceful Degradation** | Code execution has 2 retry attempts with error feedback to Gemini, plus a text-only fallback (Phase 3). If code fails completely, users still get useful analysis. Cached results show a "⚡ Cached" badge for transparency. |
-| 6 | **UX Polish** | Progress phases during AI processing, follow-up suggestion chips, chart annotations (click to label), drag-and-drop dashboard with column spanning, fullscreen chart expansion, data preview side panel — high attention to user experience for a prototype. |
-| 7 | **Clean Modular CSS** | Stylesheets are split into 4 concerns: layout, chat, grid, overlays. Imported via a manifest (`dashboard.css`). CSS variables used for theming. Good organization. |
-| 8 | **All Dependencies Pinned** | `requirements.txt` pins exact versions for all 7 packages — excellent for reproducibility and security. |
-| 9 | **Easy Launch** | `start.bat` handles Python checks, dependency installation, server start, and browser launch in one click — low friction for non-technical users. |
-| 10 | **Query Caching** | LRU cache (300 items) with MD5 hash keys prevents redundant API calls for repeated questions, saving both time and API costs. |
+| 2 | **Real Authentication & Multi-User Support** | Supabase Auth with email/password signup, JWT verification via `@require_auth` decorator on all API routes. Per-user `UserState` isolated by `user_id` from JWT. Thread-safe `SessionManager` with `threading.Lock`. |
+| 3 | **Persistent Storage Layer** | Supabase PostgreSQL with `profiles`, `chat_sessions`, `dashboard_configs` tables and Row Level Security. File uploads stored in Supabase Storage with per-user directory isolation. Session rehydration on login. |
+| 4 | **Sandbox Security (Defense-in-Depth)** | `code_executor.py` implements 5 layers: code length cap (10K chars), AST-based static analysis via `_SafetyVisitor`, 19 blocked builtins + 9 forbidden modules + 14 forbidden attributes, subprocess isolation via `spawn` context, and a 60-second timeout. |
+| 5 | **Smart Data Profiling** | `data_service.py` auto-detects dataset types (survey, time series, transactional, geographic, etc.) and generates domain-specific analysis suggestions. Provides the LLM with richer context, significantly improving output quality. |
+| 6 | **Token-Efficient Context Building** | Schema context is dynamically sized with a `max_tokens` budget. Correlations are computed locally, only metadata sent to the LLM. The extraction phase pulls out unique categorical values so the code generator knows exact column names — prevents hallucinated column references. |
+| 7 | **SSE Streaming Responses** | `/api/chat/stream` endpoint streams pipeline phases in real-time via Server-Sent Events. Frontend shows live progress updates (extracting → generating → executing → interpreting) instead of a static spinner. |
+| 8 | **Graceful Degradation** | Code execution has 2 retry attempts with error feedback to Gemini, plus a text-only fallback (Phase 3). If code fails completely, users still get useful analysis. Cached results show a "Cached" badge for transparency. |
+| 9 | **UX Polish** | Real-time streaming phases, follow-up suggestion chips, chart annotations (click to label), drag-and-drop dashboard with column spanning, fullscreen chart expansion with focus trap, data preview side panel, dark/light theme toggle with `prefers-color-scheme` auto-detection and localStorage persistence. |
+| 10 | **Clean Modular CSS with Full Dark Mode** | Stylesheets split into 4 concerns: layout, chat, grid, overlays. Imported via a manifest (`dashboard.css`). CSS custom properties used for theming with complete `[data-theme="dark"]` overrides across all files. |
+| 11 | **All Dependencies Pinned** | `requirements.txt` pins exact versions for all 10 packages — excellent for reproducibility and security. |
+| 12 | **DOMPurify XSS Prevention** | All user-generated and LLM-generated markdown is sanitized through a `marked.js` → `DOMPurify` pipeline before DOM insertion. Custom `escapeHtml()` fallback if DOMPurify is unavailable. |
+| 13 | **Per-User Query Caching** | LRU cache (300 items) per user with MD5 hash keys prevents redundant API calls for repeated questions, saving both time and API costs. Thread-safe via `threading.Lock`. |
+| 14 | **Easy Launch** | `start.bat` handles Python checks, dependency installation, server start, and browser launch in one click — low friction for non-technical users. |
 
 ---
 
@@ -174,60 +203,62 @@ graph TD
 
 | # | Area | Details | Location |
 |---|------|---------|----------|
-| 1 | **No Authentication (Fixed)** | `login.html` now uses Supabase Auth with real signup/login. JWT tokens stored in localStorage. All API endpoints protected by `@require_auth` decorator. | `login.html`, `auth_service.py`, `server.py` |
-| 2 | **Single-User Global State (Fixed)** | `AppState` replaced with `SessionManager` — per-user `UserState` keyed by `user_id` from JWT. Thread-safe with `threading.Lock`. | `app_state.py` |
-| 3 | **Thread Safety Missing (Fixed)** | `QueryCache` and `SessionManager` now use `threading.Lock()` for all state access and mutations. | `app_state.py` |
-| 4 | **No Persistent Storage (Fixed)** | Supabase PostgreSQL database created with `profiles`, `chat_sessions`, `dashboard_configs` tables. RLS enabled. Per-user upload directories. | `server.py`, Supabase |
-| 5 | **File Cache Unbounded** | `_file_cache` in `AppState` has no eviction policy — grows indefinitely with each new file upload. On a long-running server, this causes OOM. | `app_state.py` |
+| 1 | **Massive Chat Pipeline Duplication** | `chat()` (non-streaming) and `chat_stream()` (SSE) duplicate the entire analysis pipeline (~180 lines each). Any bug fix or feature change must be applied in two places. Should share a common generator/pipeline function. | `server.py` lines 418-780 |
+| 2 | **Thread-Unsafe Logout** | `logout()` mutates the shared Supabase singleton client's internal `_headers` attribute to inject user tokens before calling `sign_out()`. If two users log out simultaneously, headers can be interleaved. | `auth_service.py` lines 160-163 |
+| 3 | **No DataFrame Caching** | `data_service.load_file()` re-downloads the full file from Supabase Storage on every call. Every chat message triggers a fresh download and parse. Adds latency and bandwidth cost per request. | `data_service.py` lines 52-76 |
+| 4 | **No Session Eviction** | `SessionManager._sessions` grows unboundedly as new users authenticate. No TTL or eviction policy. `remove_state()` exists but is never called (not invoked on logout). Long-running servers will leak memory. | `app_state.py` |
+| 5 | **No Full Data Pagination** | `get_full_data()` loads the entire dataset into memory and sends it as JSON. No pagination. Large files will cause memory and bandwidth issues. | `server.py` lines 317-328 |
 
 ### 6.2 Security Concerns
 
 | # | Area | Details | Location |
 |---|------|---------|----------|
-| 1 | **No Rate Limiting** | Chat and suggestion endpoints trigger expensive LLM calls. No throttling means easy API abuse/DOS. | `server.py` |
-| 2 | **No Prompt Injection Protection** | User questions are interpolated directly into LLM prompts. A crafted question could manipulate the system prompt, causing unintended code generation. | `gemini_service.py` |
-| 3 | **Sandbox Escape Risk** | While AST validation blocks known dangerous patterns, `__subclasses__()` chains and metaclass tricks are not fully blocked. A sufficiently crafted payload could potentially escape. | `code_executor.py` |
-| 4 | **No HTTPS (Fixed)** | Flask server now supports HTTPS with self-signed certificates via `HTTPS_ENABLED=true` in `.env`. Auto-generates certs in `certs/` directory. | `server.py`, `app_config.py` |
-| 5 | **CDN Dependencies Without SRI** | 6 external libraries loaded from CDN without Subresource Integrity hashes. A compromised CDN could inject malicious code. | `dashboard.html` |
-| 6 | **Path Traversal Incomplete** | File path validation exists but `.` resolution not fully enforced in all paths. | `server.py` |
-| 7 | **No CORS Validation** | Malformed origins from env var accepted without validation. | `app_config.py` |
+| 1 | **No Rate Limiting** | Chat, suggestion, and upload endpoints trigger expensive LLM calls. No throttling means easy API abuse/DoS. | `server.py` |
+| 2 | **Zero SRI Hashes on All 6 CDN Resources** | Handsontable, SheetJS, Plotly.js, Marked.js, and DOMPurify all loaded without `integrity` or `crossorigin` attributes. A compromised CDN could inject arbitrary JavaScript with full access to auth tokens and data. | `dashboard.html` lines 15-23, 258 |
+| 3 | **Unpinned CDN Versions** | SheetJS uses `xlsx-latest`, Handsontable and Marked.js use unpinned `npm/...` URLs. Supply-chain attack risk — malicious code could be injected via a version update with no safeguard. | `dashboard.html` |
+| 4 | **localStorage Token Storage** | `dt_access_token`, `dt_refresh_token`, and `dt_user` stored in `localStorage`, accessible to any JS on the page including scripts from compromised CDNs. `httpOnly` cookies would be more secure. | `login.html` lines 309-311 |
+| 5 | **No Prompt Injection Protection** | User questions are interpolated directly into LLM prompts. A crafted question could manipulate the system prompt, causing unintended code generation. | `gemini_service.py` |
+| 6 | **Sandbox Escape Residual Risk** | While AST validation blocks known dangerous patterns, `type()`, `vars()`, `dir()`, and `hasattr()` remain in safe builtins. No memory or CPU limits on subprocess — malicious code could consume excessive resources. | `code_executor.py` |
+| 7 | **No Token Refresh Endpoint** | The server returns `refresh_token` on login, but no endpoint exists to refresh an expired access token. Users must re-authenticate when tokens expire. | `auth_service.py` |
+| 8 | **Token Verified via Network on Every Request** | `verify_token()` calls Supabase `getUser()` API on every authenticated request. No local JWT validation or caching. Adds latency and creates a dependency on Supabase availability. | `auth_service.py` line 130 |
+| 9 | **Duplicate Supabase Config** | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are read independently in both `app_config.py` and `auth_service.py`. Inconsistency risk if only one is updated. | `app_config.py`, `auth_service.py` |
 
 ### 6.3 Performance Issues
 
 | # | Area | Details | Location |
 |---|------|---------|----------|
-| 1 | **DataFrame Copied Per Execution** | Full DataFrame is copied for every code execution call — doubles memory for large files. | `code_executor.py` |
-| 2 | **O(n²) Correlation Computation** | Numeric correlation matrix computed for all column pairs — slow/expensive with 100+ columns. | `data_service.py` |
-| 3 | **Subprocess Per Query** | A new Python process is spawned for every single chat query. Process creation overhead adds 0.5-1s per request. | `code_executor.py` |
-| 4 | **No File Size Validation Client-Side** | Users can attempt uploading 1GB files with no client-side warning — only server validates after full upload. | `js/core.js` |
-| 5 | **Particle Animation O(n²) (Fixed)** | `connectParticles` computes distance for *every* pair every frame. Very heavy on CPU. Needs spatial partitioning or bounding boxes. | `js/core.js` |
+| 1 | **File Re-Downloaded Per Chat Message** | Every chat query calls `load_file()` which downloads from Supabase Storage, parses, and builds the DataFrame from scratch. No in-memory caching of loaded DataFrames. | `data_service.py` |
+| 2 | **DataFrame Copied Per Execution** | Full DataFrame is `.copy()`'d for every code execution call — doubles memory for large files. | `code_executor.py` |
+| 3 | **O(n²) Correlation Computation** | Numeric correlation matrix computed for all column pairs — slow/expensive with 100+ columns. | `data_service.py` |
+| 4 | **Subprocess Per Query** | A new Python process is spawned via `multiprocessing.get_context("spawn")` for every single chat query. Process creation overhead adds 0.5-1s per request. | `code_executor.py` |
+| 5 | **Particle Animation O(n²)** | `connectParticles()` computes distance for every particle pair every frame. On 1920x1080: ~230 particles, ~26,000 comparisons per frame at 60fps. | `js/core.js` lines 221-257 |
+| 6 | **Full Dashboard Grid Re-Render** | `renderDashboardGrid()` rebuilds entire grid HTML on every change (add, remove, reorder, resize), purging and re-creating all Plotly instances. | `js/dashboard-ui.js` |
+| 7 | **Unnecessary JS Loading on Landing Page** | `index.html` loads all 3 dashboard JS modules (`core.js`, `data-chat.js`, `dashboard-ui.js`) despite only needing the particle animation. ~60KB of unused JavaScript. | `index.html` lines 63-65 |
 
 ### 6.4 Code Quality Issues
 
 | # | Area | Details | Location |
 |---|------|---------|----------|
-| 1 | **Zero Test Coverage** | No unit tests, integration tests, or end-to-end tests for any component. The sandbox, data parsing, and API endpoints are all untested. | Entire project |
-| 2 | **Silent Failures** | `gemini_service` returns `None` instead of raising exceptions. Backend errors are swallowed with `console.error()` on frontend — users don't know what failed. | `gemini_service.py`, all JS |
-| 3 | **Magic Numbers Everywhere (Fixed)** | History caps (5, 6 messages), timeouts (60s), token budgets, chart heights (340px, 380px, 420px), animation delays (100ms, 350ms, 2500ms) scattered with no documentation. | All files |
-| 4 | **Hardcoded `API_BASE` (Fixed)** | Now uses `window.location.origin`. Works in any deployment. | `js/core.js` |
-| 5 | **Hardcoded User Identity (Fixed)** | User profile now dynamically populated from Supabase Auth session. | `dashboard.html`, `js/core.js` |
-| 6 | **No JSDoc / Docstrings** | Frontend functions have no documentation. Backend has minimal docstrings. Unclear parameter expectations. | All files |
-| 7 | **Inconsistent Error Handling** | `pinChart()` uses `alert()`, `refreshDashboard()` swallows errors silently, some endpoints return different error shapes. | `js/dashboard-ui.js`, `server.py` |
-| 8 | **Large Monolithic `chat()` Function** | The main chat endpoint handler is 144 lines — should be decomposed into pipeline stages. | `server.py` |
+| 1 | **Zero Test Coverage** | No unit tests, integration tests, or end-to-end tests for any component. The sandbox, data parsing, API endpoints, and auth are all untested. `.gitignore` includes `.pytest_cache/` but no tests exist. | Entire project |
+| 2 | **Inconsistent Error Handling** | `server.py` returns structured JSON errors via `_error_response()`. `gemini_service.py` mixes return-error-dicts with raising `RuntimeError`. `code_executor.py` returns error dicts. `data_service.py` raises exceptions. No unified pattern. | All backend files |
+| 3 | **Inconsistent Logging** | `server.py` uses structured `_log_event()`. `gemini_service.py` uses `print()` for errors (lines 223, 383) instead of the `logging` module. `auth_service.py` uses `logging.getLogger()`. Three different logging approaches. | Backend files |
+| 4 | **No Module System (Frontend)** | All frontend functions are globals on `window` scope (~45+ functions). No ES modules, no bundler. Load order dependencies between files (e.g., `core.js` must load before `data-chat.js`). | All JS files |
+| 5 | **No JSDoc / Minimal Docstrings** | Frontend functions have no documentation. Backend has minimal docstrings. Unclear parameter expectations across service boundaries. | All files |
+| 6 | **Large Monolithic Functions** | `chat()` is ~180 lines, `chat_stream()` is ~170 lines, `sendMessage()` is ~120 lines, `appendChatMessage()` is ~100 lines. Should be decomposed into pipeline stages. | `server.py`, `js/data-chat.js` |
+| 7 | **Dead Code / Stale References** | `PROGRESS_PHASES` array declared but never iterated in `data-chat.js`. `TYPING_PHASE_DELAY` declared in `constants.js` but never used. Stale comment in `server.py` line 199. `.agents/skills/SKILL.md` references a Streamlit app that no longer exists. | Various |
+| 8 | **Duplicate CSS Definitions** | `.suggestion-chip`/`.suggestions-row` duplicated in `styles.css` and `dashboard-chat.css`. `@keyframes fadeInUp` duplicated in `dashboard-chat.css` and `dashboard-overlays.css`. `.btn-outline` color set then overridden in `styles.css`. | CSS files |
 
 ### 6.5 UX / Accessibility Issues
 
 | # | Area | Details |
 |---|------|---------|
-| 1 | **No Responsive Design** | Sidebar is fixed 260px, dashboard grid is fixed 3-column, no tablet/mobile breakpoints except a single 768px query in `styles.css`. App is unusable on mobile. |
-| 2 | **No Keyboard Navigation** | Drag-and-drop has no keyboard alternative. No focus traps in modals. No skip links. Chat send button requires mouse. |
-| 3 | **SVG Icons Without Labels (Fixed)** | Navigation icons have no `aria-label`. Screen readers cannot identify sidebar sections. |
-| 4 | **No Focus Management (Fixed)** | Fullscreen chart modal has no `aria-modal`, no focus trap, can't be closed with Escape key. |
-| 5 | **Color-Only Indicators (Fixed)** | Active nav item, cached badge, and error states rely on color alone — fails WCAG 2.1 SC 1.4.1. |
-| 6 | **No Debounce on Chat Send (Fixed)** | Users can spam the send button, creating multiple concurrent API requests. |
-| 7 | **Typing Indicator Timing Mismatch (Fixed)** | Progress phases rotate on a fixed 2.5s timer regardless of actual API response time — misleading. |
-| 8 | **Landing Page Links Broken** | Navigation links (Products, Solutions, etc.) and CTA buttons on `index.html` all point to `#`. |
-| 9 | **Upload Success Shows Before Data Loads (Fixed)** | Success banner appears before grid is populated — user sees "success" with empty grid. |
+| 1 | **No Responsive Design for Dashboard** | Sidebar is fixed 260px with no collapse mechanism on mobile. Dashboard grid is always 3 columns. No responsive breakpoints. The app is desktop-only. |
+| 2 | **Sidebar Nav Items Not Keyboard-Accessible** | Nav items use `<div onclick>` instead of `<button>` or `<a>`. Not focusable via Tab, no `role="button"`, no keyboard event handlers. |
+| 3 | **No Skip Navigation Links** | No skip-to-content link for keyboard users. No ARIA live regions for error/success messages in login page. |
+| 4 | **`alert()` / `confirm()` for User Feedback** | `removeDashChart()` and `clearAllCharts()` use browser `alert()`/`confirm()` dialogs. Blocks main thread and is inconsistent with the polished UI. |
+| 5 | **Landing Page Links Broken** | Navigation links (Products, Solutions, Pricing, Support) and CTA buttons on `index.html` all point to `#`. |
+| 6 | **Handsontable License** | Uses `"non-commercial-and-evaluation"` license key. Must verify this is appropriate for the intended use case. |
+| 7 | **No ARIA Live Regions** | Login form error/success messages are not announced to screen readers. Status changes in chat (loading, phase updates) have no ARIA announcements. |
 
 ---
 
@@ -237,83 +268,145 @@ graph TD
 
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
-| 1 | **Add real authentication (Fixed)** — Implemented Supabase Auth with email/password signup, JWT verification, `@require_auth` decorator on all API routes. | Security | Medium |
-| 2 | **Make state per-session (Fixed)** — Replaced `AppState` singleton with `SessionManager` + per-user `UserState`. All state keyed by `user_id` from JWT. Thread-safe. | Multi-user | Medium |
-| 3 | **Add thread-safe caching (Fixed)** — `QueryCache` and `SessionManager` now use `threading.Lock()`. | Stability | Low |
-| 4 | **Add rate limiting** — Use `Flask-Limiter` on `/api/chat` and `/api/suggest-questions` (e.g., 10 requests/minute). | Security | Low |
-| 5 | **Make `API_BASE` dynamic (Fixed)** — Changed to `window.location.origin` in `core.js`. Works in any deployment. | Deployment | Low |
-| 6 | **Add frontend request timeouts** — Use `AbortController` with 60s timeout on all fetch calls. | Reliability | Low |
-| 7 | **Validate file size client-side (Fixed)** — Check `file.size` before uploading and show a warning. Cap at 10MB to match server config. | UX | Low |
+| 1 | **Deduplicate chat pipeline** — Extract the shared analysis pipeline from `chat()` and `chat_stream()` into a common generator function. Both endpoints consume the same generator with different output serialization. | Maintainability | Medium |
+| 2 | **Add rate limiting** — Use `Flask-Limiter` on `/api/chat`, `/api/chat/stream`, and `/api/suggest-questions` (e.g., 10 requests/minute per user). | Security | Low |
+| 3 | **Add SRI hashes + pin CDN versions** — Generate integrity hashes for all 6 external libraries. Pin SheetJS, Handsontable, and Marked.js to specific versions. | Security | Low |
+| 4 | **Fix thread-unsafe logout** — Use a per-request Supabase client instance in `logout()` instead of mutating the shared singleton's headers. | Stability | Low |
+| 5 | **Add DataFrame caching** — Cache loaded DataFrames in `UserState` after first download. Invalidate on new upload. Prevents re-downloading from Supabase on every chat message. | Performance | Low |
+| 6 | **Add session eviction** — Implement TTL-based eviction on `SessionManager._sessions`. Call `remove_state()` on logout. | Memory | Low |
+| 7 | **Add token refresh endpoint** — Server-side `/api/auth/refresh` endpoint that accepts a refresh token and returns a new access token. | Auth | Low |
 
 ### Phase 2: Quality & Reliability
 
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
-| 8 | **Add test suite** — `pytest` tests for: `code_executor` (sandbox escapes), `data_service` (parsing edge cases), `server.py` (API contract tests), and `gemini_service` (mock LLM responses). | Quality | High |
-| 9 | **Add SRI hashes to CDN scripts** — Generate integrity hashes for all 6 external libraries in `dashboard.html`. | Security | Low |
-| 10 | **Evict file cache** — Add TTL or max-size eviction to `_file_cache`. Consider `cachetools.TTLCache`. | Memory | Low |
-| 11 | **Debounce chat sends (Fixed)** — Disable send button while request is in-flight. Re-enable on response. | UX | Low |
-| 12 | **Add file cleanup** — Auto-delete uploads older than N days, or add a delete button per file. | Storage | Low |
-| 13 | **Error boundaries** — Replace `alert()` calls with branded toast notifications. Show user-facing error messages on network failures. | UX | Medium |
-| 14 | **Extract magic numbers (Fixed)** — Create a `constants.js` and a Python config class for all thresholds, timeouts, dimensions. | Maintainability | Low |
+| 8 | **Add test suite** — `pytest` tests for: `code_executor` (sandbox escapes), `data_service` (parsing edge cases), `server.py` (API contract tests), `auth_service` (JWT verification), and `gemini_service` (mock LLM responses). | Quality | High |
+| 9 | **Unify error handling** — Define a consistent error response pattern across all services. Use custom exception classes that map to HTTP status codes. Replace `print()` with structured logging. | Quality | Medium |
+| 10 | **Add local JWT validation** — Verify JWT signatures locally using Supabase's public key instead of calling `getUser()` on every request. Cache the result with a short TTL. | Performance | Medium |
+| 11 | **Consolidate Supabase config** — All modules should read Supabase credentials from `app_config.py` only. Remove duplicate `os.getenv()` calls in `auth_service.py`. | Maintainability | Low |
+| 12 | **Move localStorage tokens to httpOnly cookies** — Prevents XSS-based token theft. Requires server-side cookie management. | Security | Medium |
+| 13 | **Error toasts** — Replace `alert()` calls with branded toast notifications. Show user-facing error messages on network failures. | UX | Medium |
+| 14 | **Clean dead code** — Remove unused `PROGRESS_PHASES`, unused `TYPING_PHASE_DELAY`, stale comments, and update `.agents/skills/SKILL.md` to match current architecture. | Maintenance | Low |
 
 ### Phase 3: Production Readiness
 
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
-| 15 | **Add persistent database (Fixed)** — Supabase PostgreSQL with `profiles`, `chat_sessions`, `dashboard_configs` tables. RLS policies. Auto-profile trigger. | Persistence | High |
-| 16 | **Add HTTPS (Fixed)** — Self-signed cert support via `HTTPS_ENABLED=true`. Auto-generates certs. For production, reverse proxy recommended. | Security | Medium |
-| 17 | **Streaming responses (Fixed)** — SSE endpoint `/api/chat/stream` streams pipeline phases (extracting → generating → executing → interpreting) in real-time. Frontend typing indicator shows live server progress. | UX | High |
-| 18 | **Responsive design** — Add CSS breakpoints at 768px, 1024px, 1280px. Collapse sidebar to hamburger on mobile. Stack dashboard grid to 1 column. | Mobile | Medium |
-| 19 | **Accessibility pass** — Add ARIA labels to all icons, focus traps in modals, keyboard nav for drag-drop (arrow keys), Esc to close modals, skip links. | A11y | Medium |
-| 20 | **Process pool for execution** — Replace per-query subprocess spawning with a `ProcessPoolExecutor` to reuse workers. | Performance | Medium |
+| 15 | **Responsive design** — Add CSS breakpoints at 768px, 1024px, 1280px. Collapse sidebar to hamburger on mobile. Stack dashboard grid to 1 column. | Mobile | Medium |
+| 16 | **Accessibility pass** — Convert nav `<div onclick>` to `<button>` elements, add ARIA live regions for status changes, add skip navigation links, add keyboard nav alternative for drag-drop. | A11y | Medium |
+| 17 | **Process pool for execution** — Replace per-query subprocess spawning with a `ProcessPoolExecutor` to reuse workers. | Performance | Medium |
+| 18 | **Add data pagination** — Paginate `get_full_data()` endpoint. Load Handsontable data in chunks. Prevent OOM on large files. | Performance | Medium |
+| 19 | **Add prompt injection guardrails** — Input sanitization, output validation, and detection of prompt manipulation attempts for LLM interactions. | Security | Medium |
+| 20 | **Add Gemini API retry/backoff** — Implement exponential backoff for transient Gemini API failures. Currently all calls fail immediately on any error. | Reliability | Low |
+| 21 | **Use ES modules** — Migrate frontend to ES modules (`import`/`export`) to eliminate global namespace pollution and enforce explicit dependencies. | Quality | Medium |
 
 ### Phase 4: Nice-to-Have
 
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
-| 21 | **Export chat** — Allow exporting conversations as PDF or Markdown. | Feature | Medium |
-| 22 | **Dark mode (Fixed)** — CSS variables + `[data-theme="dark"]` overrides across all 5 CSS files. Toggle button in top bar, localStorage persistence, `prefers-color-scheme` auto-detection. Handsontable dark scheme. | UX | Low |
+| 22 | **Export chat** — Allow exporting conversations as PDF or Markdown. | Feature | Medium |
 | 23 | **Multi-file analysis** — Allow cross-file joins and comparisons (e.g., "compare sales.csv with inventory.csv"). | Feature | High |
-| 24 | **Prompt injection guardrails** — Add input sanitization and output validation for LLM interactions. Detect and block prompt manipulation attempts. | Security | Medium |
-| 25 | **Undo for dashboard actions** — Toast with "Undo" button instead of immediate deletion. | UX | Low |
+| 24 | **Undo for dashboard actions** — Toast with "Undo" button instead of immediate deletion. | UX | Low |
+| 25 | **Spatial partitioning for particles** — Replace O(n²) particle connections with a grid-based spatial index. Reduce from ~26K to ~2K comparisons per frame. | Performance | Low |
+| 26 | **Lazy-load landing page JS** — `index.html` should only load `core.js` (for particles). Defer `data-chat.js` and `dashboard-ui.js` to dashboard. | Performance | Low |
+| 27 | **Supabase migration files** — Create proper SQL migration files in `supabase/migrations/` for reproducible database schema setup instead of manual Dashboard creation. | DevOps | Low |
 
 ---
 
 ## 8. File-by-File Summary
 
+### Backend (Python) — 2,552 lines
+
 | File | Lines | Role | Health |
 |------|-------|------|--------|
-| `server.py` | ~500 | Flask router, multi-phase AI pipeline orchestrator, auth middleware | 🟢 Auth via `@require_auth`, per-user state |
-| `gemini_service.py` | ~450 | LLM prompts, code gen, interpretation, extraction | 🟡 Silent None returns, prompt injection risk |
-| `data_service.py` | ~450 | Data loading, schema gen, profiling, statistics | 🟢 Solid, but O(n²) correlations |
-| `code_executor.py` | ~350 | Sandboxed execution with AST validation | 🟢 Good security, but subprocess overhead |
-| `app_state.py` | ~50 | Global singleton state + LRU cache | 🔴 Not thread-safe, unbounded file cache |
-| `app_config.py` | ~30 | Environment variable parsing | 🟢 Clean and minimal |
-| `js/core.js` | ~450 | App state, particles, DOM init, utilities | 🟡 Hardcoded API_BASE, memory leaks |
-| `js/data-chat.js` | ~1050 | Upload, chat, chart rendering, annotations | 🟡 Largest file, no debounce, timing issues |
-| `js/dashboard-ui.js` | ~520 | Dashboard grid, drag-drop, pin/remove | 🟡 Race conditions on resize, no keyboard |
-| `dashboard.html` | ~207 | Main SPA shell | 🟡 CDN without SRI, inline event handlers |
-| `index.html` | ~56 | Landing page | 🟠 Broken nav links, placeholder CTAs |
-| `login.html` | ~118 | Fake login page | 🔴 No real auth, hardcoded redirect |
-| `styles.css` | ~380 | Landing page + shared styles | 🟡 Only 1 breakpoint, many hardcoded values |
-| `css/dashboard-*.css` | ~1108 | Dashboard layout, chat, grid, overlays | 🟡 No responsive design, z-index unmanaged |
-| `start.bat` | ~44 | Windows launcher | 🟡 Silent pip errors, no Python version check |
-| `requirements.txt` | 7 | Dependencies | 🟢 All pinned — excellent |
+| `server.py` | 998 | Flask REST API + SSE router, multi-phase AI pipeline orchestrator, auth middleware, static file serving | 🟡 Duplicated chat pipeline; no rate limiting; no pagination |
+| `gemini_service.py` | 435 | LLM prompt construction, code generation, interpretation, extraction, response parsing | 🟢 Solid; `print()` instead of logger; inconsistent error patterns |
+| `data_service.py` | 454 | Supabase Storage file management, DataFrame summarization, schema generation, data profiling | 🟢 Good; re-downloads file on every call; O(n²) correlations |
+| `code_executor.py` | 317 | Sandboxed execution with AST validation, subprocess isolation, result normalization | 🟢 Strong security model; subprocess overhead; no memory limits |
+| `auth_service.py` | 195 | Supabase Auth integration, JWT verification, profile management, `@require_auth` decorator | 🟡 Thread-unsafe logout; no local JWT caching; no token refresh |
+| `app_state.py` | 92 | Per-user `SessionManager` + `UserState` + bounded `QueryCache` with thread safety | 🟢 Clean; no session eviction; `remove_state()` never called |
+| `app_config.py` | 61 | Centralized environment variable parsing with safe defaults | 🟢 Clean; duplicate Supabase config with auth_service |
+
+### Frontend (HTML/JS/CSS) — 4,106 lines
+
+| File | Lines | Role | Health |
+|------|-------|------|--------|
+| `dashboard.html` | 264 | Main SPA shell — sidebar, 3 views, fullscreen modal, CDN dependencies | 🔴 Zero SRI hashes on 6 CDN resources; unpinned versions |
+| `js/data-chat.js` | 734 | File upload, SSE chat streaming, chart rendering, typing indicators, annotations | 🟡 Largest file; innerHTML patterns; dead `PROGRESS_PHASES` |
+| `js/dashboard-ui.js` | 479 | Dashboard grid, drag-and-drop, fullscreen modal with focus trap, chart management | 🟡 Full grid re-render on every change; `alert()` for errors |
+| `js/core.js` | 389 | App singleton, auth, theme toggle, particle animation, DOM initialization | 🟡 O(n²) particles; global namespace; load order dependency |
+| `login.html` | 332 | Supabase Auth page — sign in/up toggle, inline styles + scripts | 🟡 localStorage tokens; no ARIA live regions |
+| `styles.css` | 566 | Global styles, CSS variables, dark mode, landing page, responsive (1 breakpoint) | 🟡 Single breakpoint; duplicate chip styles; `.btn-outline` bug |
+| `css/dashboard-overlays.css` | 467 | Upload banner, data preview panel, fullscreen modal, stats, tables, annotations | 🟢 Well-structured; duplicate `fadeInUp` keyframes |
+| `css/dashboard-chat.css` | 340 | Chat messages, avatars, typing indicator, input bar, suggestion chips | 🟢 Clean; duplicate chip styles with `styles.css` |
+| `css/dashboard-grid.css` | 227 | Visualization grid, chart cards, drag-and-drop states, resize controls | 🟢 Good; no responsive breakpoints for grid |
+| `css/dashboard-layout.css` | 206 | Dashboard structure — sidebar, top bar, content area, Handsontable theme | 🟢 Clean; fixed sidebar on all screen sizes |
+| `index.html` | 67 | Marketing landing page with particle canvas | 🟡 Loads unnecessary JS modules; dead nav links |
+| `js/constants.js` | 13 | Centralized frontend config constants | 🟢 Clean; one unused constant |
+| `script.js` | 16 | Legacy backward-compatibility module loader | 🟢 Minimal; potentially unused |
+
+### Configuration & Infrastructure
+
+| File | Lines | Role | Health |
+|------|-------|------|--------|
+| `requirements.txt` | 10 | Python dependencies — all 10 packages pinned | 🟢 Excellent |
+| `start.bat` | 42 | Windows launcher — Python check, pip install, server start, browser open | 🟢 Functional |
+| `.env` | 6 vars | Environment config — API keys, Supabase credentials, HTTPS toggle | 🟢 In `.gitignore` |
+| `.gitignore` | 27 | Git ignore rules | 🟢 Covers essentials |
+| `README.md` | 152 | Project documentation with API endpoints, setup, security model | 🟢 Comprehensive |
+| `dashboard.css` | 6 | CSS `@import` manifest for 4 dashboard stylesheets | 🟢 Clean |
+| `.agents/skills/SKILL.md` | 295 | Agent instruction document | 🟠 References non-existent Streamlit app; outdated |
+| `supabase/migrations/` | 0 | Empty — no SQL migration files committed | 🟠 Schema created manually in Dashboard |
 
 ---
 
-## 9. Verdict
+## 9. External Dependency Inventory
 
-**Data Talk is a well-architected prototype with a genuinely clever AI pipeline.** The multi-phase approach (extract → generate code → execute → interpret) is superior to naive LLM-based data analysis, and the sandbox security model shows thoughtful engineering. UX polish — progress indicators, suggestion chips, dashboard pinning, chart annotations — elevates it above a typical hackathon project.
+### Backend (Python)
 
-**The main gaps are production-readiness:**
-- **Security**: No real auth, no rate limiting, no HTTPS, CDN scripts without integrity checks
-- **Scalability**: Single-user global state, thread-unsafe caches, per-query subprocess spawning
-- **Reliability**: Zero test coverage, silent failures, unbounded memory growth
-- **Accessibility**: Not usable on mobile, no keyboard navigation, missing ARIA labels
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `Flask` | 3.1.0 | Web framework / REST API |
+| `Flask-Cors` | 5.0.0 | CORS middleware |
+| `google-genai` | 1.25.0 | Google Gemini AI SDK |
+| `numpy` | 2.2.2 | Numerical computing |
+| `pandas` | 2.2.3 | Data manipulation |
+| `openpyxl` | 3.1.5 | Excel parsing |
+| `python-dotenv` | 1.0.1 | `.env` file loading |
+| `supabase` | 2.13.0 | Auth, Storage, Database |
+| `PyJWT` | 2.10.1 | JWT handling |
+| `cryptography` | 44.0.0 | Crypto primitives / SSL |
 
-**As a prototype / personal tool**: Excellent. The pipeline design is smart and the UX is polished.
-**As a production application**: Needs the Phase 1-3 improvements above before serving real users.
+### Frontend (CDN)
 
-The codebase is clean and readable — a strong foundation to build on.
+| Library | Version | Pinned? | SRI? |
+|---------|---------|---------|------|
+| Handsontable CSS | Latest | No | No |
+| Handsontable JS | Latest | No | No |
+| SheetJS (XLSX) | Latest | No | No |
+| Plotly.js | 2.35.0 | Yes | No |
+| Marked.js | Latest | No | No |
+| DOMPurify | 3.2.6 | Yes | No |
+
+---
+
+## 10. Verdict
+
+**Data Talk has matured significantly from its prototype origins into a near-production application with real authentication, persistent storage, and streaming responses.** The multi-phase AI pipeline (extract → generate code → execute → interpret) remains the architectural crown jewel — a genuinely clever approach that outperforms naive LLM-based data analysis. The addition of Supabase for auth, storage, and database, combined with SSE streaming, dark mode, and per-user state isolation, demonstrates deliberate engineering evolution.
+
+**What's strong:**
+- **Architecture**: Multi-phase AI pipeline with intelligent data profiling and token-efficient context building
+- **Security**: Defense-in-depth sandbox (AST + restricted builtins + subprocess + timeout), JWT authentication, per-user data isolation
+- **UX**: Real-time streaming phases, chart annotations, drag-and-drop dashboard, dark/light theme, suggestion chips
+- **Infrastructure**: Supabase integration (Auth + Storage + PostgreSQL), session rehydration, per-user caching
+
+**What needs attention:**
+- **Code quality**: Duplicated chat pipeline (~360 lines), zero test coverage, inconsistent error handling and logging patterns, global JS namespace
+- **Security hardening**: Zero SRI hashes on all 6 CDN dependencies (highest priority fix), unpinned CDN versions, localStorage token storage, no rate limiting
+- **Performance**: File re-downloaded from Supabase on every chat message, subprocess spawned per query, O(n²) particle animation
+- **Accessibility**: Desktop-only (no responsive design), keyboard-inaccessible nav items, no ARIA live regions
+
+**As a personal/demo tool**: Excellent. Well-polished, feature-rich, and architecturally sound.
+**As a production application**: Needs Phase 1-2 improvements — particularly SRI hashes, rate limiting, pipeline deduplication, DataFrame caching, and a test suite.
+
+The codebase is clean, well-modularized, and readable — a strong foundation with clear paths for improvement.
