@@ -432,39 +432,3 @@ def _parse_response(response_text):
         "stats": None,
         "followup": []
     }
-
-
-def get_quick_summary(data_context):
-    """
-    Ask Gemini for a quick summary of the dataset (used after file upload).
-    """
-    prompt = f"""{SYSTEM_PROMPT}
-
-Here is the dataset:
-
-{data_context}
-
-Provide a brief 2-3 sentence summary of this dataset. What kind of data is it?
-What are the most interesting columns? How many records are there?
-Return as JSON with "text" key and "chart" set to null."""
-
-    try:
-        response = client.models.generate_content(
-            model=MODEL_ID,
-            contents=prompt,
-        )
-        usage = response.usage_metadata
-        result = _parse_response(response.text)
-        result["usage"] = {
-            "input_tokens": usage.prompt_token_count,
-            "output_tokens": usage.candidates_token_count,
-            "total_tokens": usage.total_token_count
-        }
-        return result
-    except Exception as e:
-        return {
-            "error": True,
-            "text": f"Dataset loaded successfully. Error generating summary: {str(e)}",
-            "chart": None,
-            "usage": None
-        }
