@@ -218,6 +218,11 @@ def api_logout():
 @require_auth
 def api_session():
     """Validate the current session and return user info."""
+    # Rehydrate user state from Supabase if not already loaded
+    state = _get_user_state()
+    if not state.chat_histories and not state.active_file.get("filename"):
+        _load_chat_history_for_user(g.user_id)
+
     profile = auth_service.get_profile(g.user_id)
     display_name = g.user_email.split("@")[0]
     avatar_initials = display_name[:2].upper()
@@ -781,6 +786,13 @@ def get_chat_history():
     state = _get_user_state()
     session_id = g.user_id
     history = state.chat_histories.get(session_id, [])
+    
+    # Fallback: if in-memory state is empty, try loading from Supabase
+    if not history:
+        _load_chat_history_for_user(g.user_id)
+        state = _get_user_state()
+        history = state.chat_histories.get(session_id, [])
+    
     return jsonify({"history": history})
 
 
