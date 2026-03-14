@@ -4,7 +4,7 @@
 .chat-layout {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
     overflow: hidden;
 }
 
@@ -246,7 +246,7 @@
     padding: 8px 12px;
     transition: all 0.3s;
     max-width: 860px;
-    margin: 0 auto;
+    margin: 0 auto 20px auto;
 }
 
 .chat-input-wrapper:focus-within {

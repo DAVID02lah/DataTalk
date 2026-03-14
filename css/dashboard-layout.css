@@ -166,18 +166,29 @@ body {
 
 .content-area {
     flex: 1;
-    padding: 30px;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
 }
 
 /* Views */
 .view-section {
     display: none;
+    flex: 1;
     height: 100%;
+    padding: 30px;
+    min-height: 0;
+}
+
+#view-chat {
+    padding: 0;
 }
 
 .view-section.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
 }
 
 /* Empty States */
