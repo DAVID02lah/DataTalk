@@ -75,13 +75,6 @@ def _get_user_state():
     return session_mgr.get_state(g.user_id)
 
 
-def _get_user_upload_dir():
-    """Get per-user upload directory."""
-    user_dir = os.path.join(data_service.UPLOAD_DIR, g.user_id)
-    os.makedirs(user_dir, exist_ok=True)
-    return user_dir
-
-
 # Removed local path helpers as we use Supabase now
 
 
@@ -442,7 +435,6 @@ def chat():
         )
 
     try:
-        user_dir = _get_user_upload_dir()
 
         # Build cache key from message + filename
         cache_key = hashlib.md5(f"{filename}:{message}".encode()).hexdigest()
@@ -980,7 +972,6 @@ def _generate_self_signed_cert():
 if __name__ == "__main__":
     import ipaddress  # Lazy import for self-signed cert SAN
 
-    data_service.ensure_upload_dir()
 
     ssl_context = None
     protocol = "http"
@@ -990,5 +981,5 @@ if __name__ == "__main__":
         protocol = "https"
 
     _log_event("server_start", port=app_config.PORT, debug=app_config.DEBUG,
-               protocol=protocol, upload_dir=data_service.UPLOAD_DIR)
+               protocol=protocol)
     app.run(debug=app_config.DEBUG, port=app_config.PORT, ssl_context=ssl_context)

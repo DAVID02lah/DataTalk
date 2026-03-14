@@ -10,15 +10,7 @@ import pandas as pd
 from werkzeug.utils import secure_filename
 import auth_service
 
-
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
-
-
-def ensure_upload_dir():
-    """Create the uploads directory if it doesn't exist."""
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 
 def get_dataset_bucket():
     """Get the Supabase storage bucket for datasets."""
@@ -448,27 +440,6 @@ def list_uploaded_files(user_id=None):
         return files
     except Exception:
         return []
-
-
-def _resolve_upload_path(filename, upload_dir=None):
-    """Resolve a filename under uploads and block path traversal."""
-    if not filename:
-        raise ValueError("Filename is required.")
-
-    target_dir = upload_dir or UPLOAD_DIR
-    raw_name = str(filename)
-    clean_name = os.path.basename(raw_name)
-    if clean_name != raw_name:
-        raise ValueError("Invalid file path.")
-
-    upload_root = os.path.realpath(target_dir)
-    candidate = os.path.realpath(os.path.join(upload_root, clean_name))
-
-    if os.path.commonpath([upload_root, candidate]) != upload_root:
-        raise ValueError("Invalid file path.")
-
-    return candidate
-
 
 def _to_native(val):
     """Convert numpy/pandas types to native Python types for JSON serialization."""
