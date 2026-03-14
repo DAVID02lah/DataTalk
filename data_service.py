@@ -4,9 +4,11 @@ data_service.py — Data loading and summarization utilities for Data Talk.
 
 import os
 import re
+import io
 import warnings
 import pandas as pd
 from werkzeug.utils import secure_filename
+import auth_service
 
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
@@ -18,13 +20,17 @@ def ensure_upload_dir():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-def save_uploaded_file(file_storage, upload_dir=None):
+def get_dataset_bucket():
+    """Get the Supabase storage bucket for datasets."""
+    sb = auth_service.get_supabase_service()
+    return sb.storage.from_("datasets")
+
+
+def save_uploaded_file(file_storage, user_id=None):
     """
-    Save a Flask FileStorage object to the uploads directory.
-    Returns the filename and full path.
+    Save a Flask FileStorage object to Supabase Storage.
+    Returns the filename and the storage path.
     """
-    target_dir = upload_dir or UPLOAD_DIR
-    os.makedirs(target_dir, exist_ok=True)
     raw_filename = file_storage.filename or ""
     filename = secure_filename(raw_filename)
     if not filename:
@@ -34,38 +40,48 @@ def save_uploaded_file(file_storage, upload_dir=None):
     if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(f"Unsupported file type: {ext}")
 
-    filepath = _resolve_upload_path(filename, target_dir)
+    bucket = get_dataset_bucket()
+    
+    # Path in Supabase: user_id/filename
+    storage_path = f"{user_id}/{filename}" if user_id else filename
+    
+    # Read file content
+    file_content = file_storage.read()
+    
+    # Upload to Supabase (overwrite if exists)
+    bucket.upload(path=storage_path, file=file_content, file_options={"upsert": "true", "content-type": file_storage.mimetype})
+    
+    # Reset file pointer if needed elsewhere (unlikely but safe)
+    file_storage.seek(0)
+    
+    return filename, storage_path
 
-    # Avoid accidental overwrite by appending a numeric suffix.
-    base_name, base_ext = os.path.splitext(filename)
-    index = 1
-    while os.path.exists(filepath):
-        filename = f"{base_name}_{index}{base_ext}"
-        filepath = _resolve_upload_path(filename, target_dir)
-        index += 1
 
-    file_storage.save(filepath)
-    return filename, filepath
-
-
-def load_file(filename, upload_dir=None):
+def load_file(filename, user_id=None):
     """
-    Load a CSV or Excel file from the uploads directory into a pandas DataFrame.
+    Load a CSV or Excel file from Supabase Storage into a pandas DataFrame.
     """
-    target_dir = upload_dir or UPLOAD_DIR
-    filepath = _resolve_upload_path(filename, target_dir)
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"File not found: {filename}")
-
-    ext = os.path.splitext(filepath)[1].lower()
-    if ext == ".csv":
-        df = pd.read_csv(filepath)
-    elif ext in (".xlsx", ".xls"):
-        df = pd.read_excel(filepath, engine="openpyxl")
-    else:
-        raise ValueError(f"Unsupported file type: {ext}")
-
-    return df
+    bucket = get_dataset_bucket()
+    storage_path = f"{user_id}/{filename}" if user_id else filename
+    
+    try:
+        # Download from Supabase
+        response = bucket.download(storage_path)
+        
+        # Load into memory buffer
+        buffer = io.BytesIO(response)
+        
+        ext = os.path.splitext(filename)[1].lower()
+        if ext == ".csv":
+            df = pd.read_csv(buffer)
+        elif ext in (".xlsx", ".xls"):
+            df = pd.read_excel(buffer, engine="openpyxl")
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+        
+        return df
+    except Exception as e:
+        raise FileNotFoundError(f"Failed to load file '{filename}' from storage: {e}")
 
 
 def get_summary(df):
@@ -409,20 +425,29 @@ def get_profile_string(profile):
     return "\n".join(lines)
 
 
-def list_uploaded_files(upload_dir=None):
-    """Return a list of filenames in the uploads directory."""
-    target_dir = upload_dir or UPLOAD_DIR
-    os.makedirs(target_dir, exist_ok=True)
-    files = []
-    for f in os.listdir(target_dir):
-        ext = os.path.splitext(f)[1].lower()
-        if ext in ALLOWED_EXTENSIONS:
-            filepath = _resolve_upload_path(f, target_dir)
-            files.append({
-                "filename": f,
-                "size_bytes": os.path.getsize(filepath)
-            })
-    return files
+def list_uploaded_files(user_id=None):
+    """Return a list of filenames from Supabase Storage for the user."""
+    bucket = get_dataset_bucket()
+    folder_path = str(user_id) if user_id else ""
+    
+    try:
+        # List files in the user's folder
+        res = bucket.list(folder_path)
+        files = []
+        for f in res:
+            name = f["name"]
+            if name == ".emptyFolderPlaceholder":
+                continue
+            ext = os.path.splitext(name)[1].lower()
+            if ext in ALLOWED_EXTENSIONS:
+                files.append({
+                    "filename": name,
+                    "size_bytes": f.get("metadata", {}).get("size") or 0,
+                    "updated_at": f.get("updated_at")
+                })
+        return files
+    except Exception:
+        return []
 
 
 def _resolve_upload_path(filename, upload_dir=None):

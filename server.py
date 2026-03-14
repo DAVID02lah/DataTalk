@@ -11,15 +11,17 @@ All /api/* data routes are protected by @require_auth.
 State is per-user via SessionManager.
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import re
 import json
 import time
 import hashlib
 import logging
-from flask import Flask, request, jsonify, send_from_directory, g, Response
+from flask import Flask, request, jsonify, send_from_directory, g, Response, stream_with_context
 from flask_cors import CORS
-from dotenv import load_dotenv
 from werkzeug.exceptions import RequestEntityTooLarge
 
 import app_config
@@ -30,18 +32,14 @@ import code_executor
 import auth_service
 from auth_service import require_auth
 
-load_dotenv()
-
 # --- Flask App Setup ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
 app.config["MAX_CONTENT_LENGTH"] = app_config.MAX_CONTENT_LENGTH
 
 cors_origins = app_config.get_allowed_cors_origins()
-if cors_origins:
-    CORS(app, resources={r"/api/*": {"origins": cors_origins}})
-else:
-    CORS(app)
+CORS(app, resources={r"/api/*": {"origins": cors_origins}})
+
 
 logger = logging.getLogger("data_talk")
 logging.basicConfig(
@@ -84,50 +82,52 @@ def _get_user_upload_dir():
     return user_dir
 
 
-def _get_chat_history_path():
-    """Get per-user chat history file path."""
-    return os.path.join(_get_user_upload_dir(), "chat_history.json")
+# Removed local path helpers as we use Supabase now
 
 
-def _get_dashboard_config_path():
-    """Get per-user dashboard config file path."""
-    return os.path.join(_get_user_upload_dir(), "dashboard_config.json")
-
-
-def _save_chat_history():
-    """Persist chat history to disk for the current user."""
-    state = _get_user_state()
+def _save_chat_history(user_id=None, state=None):
+    """Persist chat history to Supabase for the current user."""
     try:
-        path = _get_chat_history_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(state.chat_histories, f, indent=2, default=str)
+        # Use provided ID/state if available, otherwise fall back to context objects
+        # We check explicitly to avoid triggering context errors if they are provided.
+        if user_id and state:
+            uid = user_id
+            st = state
+        else:
+            uid = g.user_id
+            st = _get_user_state()
+        
+        sb_service = auth_service.get_supabase_service()
+        # Upsert into chat_sessions table
+        sb_service.table("chat_sessions").upsert({
+            "user_id": uid,
+            "filename": st.active_file.get("filename"),
+            "history": st.chat_histories,
+            "updated_at": "now()"
+        }, on_conflict="user_id, filename").execute()
     except Exception as e:
-        _log_event("chat_history_save_failed", error=str(e))
+        logger.error("Chat history save failed to Supabase: %s", e)
 
 
 def _load_chat_history_for_user(user_id):
-    """Load chat history from disk for a specific user."""
+    """Load chat history from Supabase for a specific user."""
     state = session_mgr.get_state(user_id)
-    user_dir = os.path.join(data_service.UPLOAD_DIR, user_id)
-    chat_path = os.path.join(user_dir, "chat_history.json")
     try:
-        if os.path.exists(chat_path):
-            with open(chat_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                state.chat_histories = data
-    except Exception:
-        state.chat_histories = {}
-
-    # Rehydrate active_file
-    try:
-        files = data_service.list_uploaded_files(user_dir)
-        if files:
-            state.active_file["filename"] = files[0]["filename"]
-            _log_event("active_file_rehydrated", user_id=user_id, filename=files[0]["filename"])
+        sb_service = auth_service.get_supabase_service()
+        # Fetch the most recent chat session for this user
+        result = sb_service.table("chat_sessions") \
+            .select("filename, history") \
+            .eq("user_id", user_id) \
+            .order("updated_at", desc=True) \
+            .limit(1).execute()
+        
+        if result.data:
+            session = result.data[0]
+            state.active_file["filename"] = session.get("filename")
+            state.chat_histories = session.get("history", {})
+            _log_event("active_file_rehydrated", user_id=user_id, filename=session.get("filename"))
     except Exception as e:
-        _log_event("active_file_rehydrate_failed", user_id=user_id, error=str(e))
+        logger.error("Chat history load failed from Supabase: %s", e)
 
 
 # ==============================================================
@@ -268,9 +268,8 @@ def upload_file():
         return jsonify({"error": f"Unsupported file type: {ext}. Use CSV or Excel."}), 400
 
     try:
-        user_dir = _get_user_upload_dir()
-        filename, _ = data_service.save_uploaded_file(file, upload_dir=user_dir)
-        df = data_service.load_file(filename, upload_dir=user_dir)
+        filename, _ = data_service.save_uploaded_file(file, user_id=g.user_id)
+        df = data_service.load_file(filename, user_id=g.user_id)
         summary = data_service.get_summary(df)
 
         state = _get_user_state()
@@ -298,8 +297,7 @@ def upload_file():
 @require_auth
 def list_files():
     """List all uploaded files for the current user."""
-    user_dir = _get_user_upload_dir()
-    files = data_service.list_uploaded_files(user_dir)
+    files = data_service.list_uploaded_files(user_id=g.user_id)
     state = _get_user_state()
     return jsonify({"files": files, "active": state.active_file["filename"]})
 
@@ -309,8 +307,7 @@ def list_files():
 def data_summary(filename):
     """Get summary stats for a specific uploaded file."""
     try:
-        user_dir = _get_user_upload_dir()
-        df = data_service.load_file(filename, upload_dir=user_dir)
+        df = data_service.load_file(filename, user_id=g.user_id)
         summary = data_service.get_summary(df)
         return jsonify({"filename": filename, "summary": summary})
     except FileNotFoundError:
@@ -324,8 +321,7 @@ def data_summary(filename):
 def get_full_data(filename):
     """Get the full dataset for the data connector."""
     try:
-        user_dir = _get_user_upload_dir()
-        df = data_service.load_file(filename, upload_dir=user_dir)
+        df = data_service.load_file(filename, user_id=g.user_id)
         data = [df.columns.tolist()] + df.fillna("").values.tolist()
         return jsonify({"filename": filename, "data": data})
     except FileNotFoundError:
@@ -347,8 +343,7 @@ def suggest_questions():
         return jsonify({"questions": []})
 
     try:
-        user_dir = _get_user_upload_dir()
-        df = data_service.load_file(filename, upload_dir=user_dir)
+        df = data_service.load_file(filename, user_id=g.user_id)
         cols_info = ", ".join([f"{c} ({df[c].dtype})" for c in df.columns[:15]])
 
         prompt = f"""Given a dataset with these columns: {cols_info}
@@ -461,8 +456,8 @@ def chat():
                 _log_event("chat_cache_hit", user_id=g.user_id, filename=filename)
                 return jsonify(cached_result)
 
-        # Load the full dataset
-        df = data_service.load_file(filename, upload_dir=user_dir)
+        # Load the full dataset from Supabase
+        df = data_service.load_file(filename, user_id=g.user_id)
 
         # Get chat history
         session_id = g.user_id
@@ -639,9 +634,6 @@ def chat_stream():
     if not filename:
         return jsonify({"error": "Please upload a dataset first!"}), 400
 
-    user_dir = os.path.join(data_service.UPLOAD_DIR, user_id)
-    os.makedirs(user_dir, exist_ok=True)
-
     def generate():
         try:
             # --- Cache check ---
@@ -657,7 +649,7 @@ def chat_stream():
 
             # --- Load dataset ---
             yield _sse_event("phase", {"phase": "loading", "message": "Loading dataset..."})
-            df = data_service.load_file(filename, upload_dir=user_dir)
+            df = data_service.load_file(filename, user_id=user_id)
 
             session_id = user_id
             history = state.chat_histories.get(session_id, [])
@@ -772,13 +764,8 @@ def chat_stream():
             history.append({"role": "model", "text": result["text"], "chart": result.get("chart"),
                             "table": result.get("table"), "stats": result.get("stats")})
             state.chat_histories[session_id] = history
-            # Persist chat history
-            try:
-                chat_path = os.path.join(user_dir, "chat_history.json")
-                with open(chat_path, "w", encoding="utf-8") as f:
-                    json.dump(history[-50:], f, default=str)
-            except Exception:
-                pass
+            # Persist chat history to Supabase
+            _save_chat_history(user_id=user_id, state=state)
 
             yield _sse_event("result", result)
             yield _sse_event("done", {})
@@ -790,7 +777,7 @@ def chat_stream():
             yield _sse_event("error", {"error": True, "text": f"Error analyzing data: {str(e)}"})
             yield _sse_event("done", {})
 
-    return Response(generate(), mimetype="text/event-stream", headers={
+    return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     })
@@ -814,30 +801,23 @@ def clear_chat():
     state.active_file["filename"] = None
     state.clear_file_cache()
     try:
-        path = _get_chat_history_path()
-        if os.path.exists(path):
-            os.remove(path)
-    except Exception:
-        pass
+        sb_service = auth_service.get_supabase_service()
+        sb_service.table("chat_sessions").delete().eq("user_id", g.user_id).execute()
+    except Exception as e:
+        logger.error("Chat history clear failed from Supabase: %s", e)
     return jsonify({"success": True})
 
-
-# ==============================================================
-# API: Dashboard Config
-# ==============================================================
 
 @app.route("/api/dashboard", methods=["GET"])
 @require_auth
 def get_dashboard():
-    """Get the saved dashboard configuration (pinned charts)."""
+    """Get the saved dashboard configuration from Supabase."""
     try:
-        path = _get_dashboard_config_path()
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            return jsonify(config)
-        else:
-            return jsonify({"charts": []})
+        sb_service = auth_service.get_supabase_service()
+        result = sb_service.table("dashboard_configs").select("config").eq("user_id", g.user_id).execute()
+        if result.data and len(result.data) > 0:
+            return jsonify(result.data[0]["config"])
+        return jsonify({"charts": []})
     except Exception:
         return jsonify({"charts": []})
 
@@ -845,49 +825,44 @@ def get_dashboard():
 @app.route("/api/dashboard", methods=["POST"])
 @require_auth
 def save_dashboard():
-    """
-    Save dashboard configuration.
-    Body: { "charts": [ { "id": "...", "title": "...", "chart": {...plotly}, "position": n } ] }
-    """
+    """Save dashboard configuration to Supabase."""
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
 
     try:
-        path = _get_dashboard_config_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, default=str)
+        sb_service = auth_service.get_supabase_service()
+        sb_service.table("dashboard_configs").upsert({
+            "user_id": g.user_id,
+            "config": data,
+            "updated_at": "now()"
+        }, on_conflict="user_id").execute()
         return jsonify({"success": True})
     except Exception as e:
+        logger.error("Dashboard save failed to Supabase: %s", e)
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/dashboard/pin", methods=["POST"])
 @require_auth
 def pin_chart():
-    """
-    Pin a single chart to the dashboard.
-    Body: { "title": "...", "chart": {...plotly json} }
-    """
+    """Pin a single chart to the dashboard in Supabase."""
     data = request.get_json()
     if not data or "chart" not in data:
         return jsonify({"error": "No chart data provided"}), 400
 
     try:
-        path = _get_dashboard_config_path()
-        config = {"charts": []}
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            if isinstance(loaded, dict) and "charts" in loaded:
-                config = loaded
-            elif isinstance(loaded, list):
-                config = {"charts": loaded}
-
+        sb_service = auth_service.get_supabase_service()
+        
+        # 1. Fetch current config
+        result = sb_service.table("dashboard_configs").select("config").eq("user_id", g.user_id).execute()
+        config = result.data[0]["config"] if (result.data and len(result.data) > 0) else {"charts": []}
+        
         charts_list = config.get("charts", [])
         if not isinstance(charts_list, list):
             charts_list = []
+            
+        # 2. Add new chart
         new_chart = {
             "id": f"chart_{int(time.time() * 1000)}",
             "title": data.get("title", "Untitled Chart"),
@@ -897,37 +872,49 @@ def pin_chart():
         }
         charts_list.append(new_chart)
         config["charts"] = charts_list
-
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, default=str)
+        
+        # 3. Save back to Supabase
+        sb_service.table("dashboard_configs").upsert({
+            "user_id": g.user_id,
+            "config": config,
+            "updated_at": "now()"
+        }, on_conflict="user_id").execute()
 
         return jsonify({"success": True, "chart_id": new_chart["id"]})
 
     except Exception as e:
+        logger.error("Chart pin failed: %s", e)
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/dashboard/remove/<chart_id>", methods=["DELETE"])
 @require_auth
 def remove_chart(chart_id):
-    """Remove a chart from the dashboard by its ID."""
+    """Remove a chart from the dashboard in Supabase."""
     try:
-        path = _get_dashboard_config_path()
-        if not os.path.exists(path):
-            return jsonify({"error": "No dashboard config"}), 404
-
-        with open(path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-
+        sb_service = auth_service.get_supabase_service()
+        
+        # 1. Fetch current config
+        result = sb_service.table("dashboard_configs").select("config").eq("user_id", g.user_id).execute()
+        if not result.data or len(result.data) == 0:
+            return jsonify({"error": "No dashboard config found"}), 404
+            
+        config = result.data[0]["config"]
+        
+        # 2. Filter out the chart
         config["charts"] = [c for c in config.get("charts", []) if c.get("id") != chart_id]
-
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, default=str)
+        
+        # 3. Save back to Supabase
+        sb_service.table("dashboard_configs").upsert({
+            "user_id": g.user_id,
+            "config": config,
+            "updated_at": "now()"
+        }, on_conflict="user_id").execute()
 
         return jsonify({"success": True})
 
     except Exception as e:
+        logger.error("Chart removal failed: %s", e)
         return jsonify({"error": str(e)}), 500
 
 

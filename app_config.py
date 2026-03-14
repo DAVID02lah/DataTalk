@@ -22,15 +22,25 @@ def get_int_env(name, default):
         return default
 
 
-def get_allowed_cors_origins():
-    """Return configured CORS origins from env, if any."""
-    raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
-    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
-    return origins or None
-
-
 DEBUG = get_bool_env("FLASK_DEBUG", False)
 PORT = get_int_env("PORT", 5000)
+HTTPS_ENABLED = get_bool_env("HTTPS_ENABLED", False)
+
+
+def get_allowed_cors_origins():
+    """Return configured CORS origins from env, or a safe default."""
+    raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+    # Restricted defaults: only allow local access if not configured
+    protocol = "https" if HTTPS_ENABLED else "http"
+    return [
+        f"{protocol}://localhost:{PORT}",
+        f"{protocol}://[127.0.0.1]"
+    ]
+
+
 MAX_UPLOAD_MB = get_int_env("MAX_UPLOAD_MB", 10)
 MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024
 
@@ -43,8 +53,8 @@ EXEC_TIMEOUT = get_int_env("EXEC_TIMEOUT", 60)
 # Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # HTTPS
-HTTPS_ENABLED = get_bool_env("HTTPS_ENABLED", False)
 SSL_CERT_PATH = os.getenv("SSL_CERT_PATH", "certs/cert.pem")
 SSL_KEY_PATH = os.getenv("SSL_KEY_PATH", "certs/key.pem")

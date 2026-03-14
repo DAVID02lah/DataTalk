@@ -9,19 +9,24 @@ import os
 import logging
 import functools
 from flask import request, jsonify, g
+from dotenv import load_dotenv
 from supabase import create_client, Client
+
+load_dotenv()
 
 logger = logging.getLogger("data_talk.auth")
 
 # --- Supabase Client ---
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 _supabase: Client | None = None
+_supabase_service: Client | None = None
 
 
 def get_supabase() -> Client:
-    """Get or create the Supabase client singleton."""
+    """Get or create the Supabase client singleton (anon)."""
     global _supabase
     if _supabase is None:
         if not SUPABASE_URL or not SUPABASE_ANON_KEY:
@@ -30,6 +35,17 @@ def get_supabase() -> Client:
             )
         _supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
     return _supabase
+
+
+def get_supabase_service() -> Client:
+    """Get or create the Supabase service-role client (bypasses RLS)."""
+    global _supabase_service
+    if _supabase_service is None:
+        key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
+        if key == SUPABASE_ANON_KEY:
+            logger.warning("SUPABASE_SERVICE_ROLE_KEY not found; falling back to anon key (RLS may block requests).")
+        _supabase_service = create_client(SUPABASE_URL, key)
+    return _supabase_service
 
 
 # --- Auth Operations ---
@@ -78,14 +94,15 @@ def login(email: str, password: str) -> dict:
         if not user or not session:
             return {"error": "Invalid email or password."}
 
-        # Fetch profile for display name
+        # Fetch profile for display name using service client
         display_name = email.split("@")[0]
         try:
-            profile = sb.table("profiles").select("display_name, avatar_initials").eq("id", str(user.id)).single().execute()
+            sb_service = get_supabase_service()
+            profile = sb_service.table("profiles").select("display_name, avatar_initials").eq("id", str(user.id)).single().execute()
             if profile.data:
                 display_name = profile.data.get("display_name", display_name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Profile fetch during login failed (likely RLS): %s", e)
 
         return {
             "success": True,
@@ -124,12 +141,15 @@ def verify_token(access_token: str) -> dict | None:
 
 
 def get_profile(user_id: str) -> dict | None:
-    """Fetch user profile from the profiles table."""
-    sb = get_supabase()
+    """Fetch user profile from the profiles table using service client."""
+    sb_service = get_supabase_service()
     try:
-        result = sb.table("profiles").select("*").eq("id", user_id).single().execute()
-        return result.data
-    except Exception:
+        result = sb_service.table("profiles").select("*").eq("id", user_id).execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0]
+        return None
+    except Exception as e:
+        logger.error("Error fetching profile for %s: %s", user_id, e)
         return None
 
 
