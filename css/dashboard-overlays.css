@@ -58,8 +58,11 @@
 }
 
 .data-preview-toggle:hover {
-    color: var(--primary-color);
+    background: var(--surface-primary);
     border-color: var(--primary-color);
+    color: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px var(--shadow-color);
 }
 
 .data-preview-panel {
@@ -223,8 +226,11 @@
 }
 
 .table-toggle-btn:hover {
-    color: var(--primary-color);
+    background: var(--surface-primary);
     border-color: var(--primary-color);
+    color: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px var(--shadow-color);
 }
 
 .table-toggle-btn.active {
