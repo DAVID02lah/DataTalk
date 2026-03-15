@@ -57,9 +57,16 @@
     color: var(--primary-color);
 }
 
+.btn-dash-danger {
+    border-color: rgba(234, 67, 53, 0.2);
+    color: #ea4335;
+    background: rgba(234, 67, 53, 0.05);
+}
+
 .btn-dash-danger:hover {
     border-color: #ea4335;
-    color: #ea4335;
+    background: #ea4335;
+    color: white;
 }
 
 .dashboard-grid {
