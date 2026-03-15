@@ -9,10 +9,7 @@ import os
 import logging
 import functools
 from flask import request, jsonify, g
-from dotenv import load_dotenv
 from supabase import create_client, Client
-
-load_dotenv()
 
 logger = logging.getLogger("data_talk.auth")
 

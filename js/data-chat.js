@@ -661,14 +661,6 @@ function addAnnotation(chartId, x, y, btnEl) {
 // Typing / Progress Indicator
 // ============================================================
 
-const PROGRESS_PHASES = [
-    "Extracting data...",
-    "Generating analysis code...",
-    "Running analysis...",
-    "Interpreting results...",
-    "Almost done...",
-];
-
 function showTypingIndicator() {
     const container = document.getElementById("chat-messages");
     if (!container) return;
