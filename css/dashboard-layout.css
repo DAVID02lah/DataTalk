@@ -51,22 +51,18 @@ body {
     margin-bottom: 4px;
     cursor: pointer;
     font-weight: 500;
-    border-left: 4px solid transparent;
+    border: 1px solid transparent;
 }
 
 .nav-item:hover {
     background: var(--surface-primary);
+    border-color: var(--primary-color);
     color: var(--primary-color);
-    border-left-color: var(--primary-color);
     transform: translateY(-1px);
     box-shadow: 0 2px 8px var(--shadow-color);
 }
 
-.nav-item.active {
-    background: var(--surface-active);
-    color: var(--primary-color);
-    border-left-color: var(--primary-color);
-}
+
 
 .nav-icon {
     width: 20px;
@@ -76,10 +72,24 @@ body {
     transition: opacity 0.2s;
 }
 
-.nav-item:hover .nav-icon,
+.nav-item.active {
+    background: var(--surface-active);
+    color: var(--primary-color);
+}
+
+.nav-item.active:hover {
+    background: var(--surface-primary);
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px var(--shadow-color);
+}
+
 .nav-item.active .nav-icon {
     opacity: 1;
 }
+
+
 
 .sidebar-footer {
     margin-top: auto;

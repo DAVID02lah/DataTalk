@@ -50,11 +50,6 @@ CHAT_HISTORY_CAP = get_int_env("CHAT_HISTORY_CAP", 5)
 QUERY_CACHE_SIZE = get_int_env("QUERY_CACHE_SIZE", 300)
 EXEC_TIMEOUT = get_int_env("EXEC_TIMEOUT", 60)
 
-# Supabase
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-
 # HTTPS
 SSL_CERT_PATH = os.getenv("SSL_CERT_PATH", "certs/cert.pem")
 SSL_KEY_PATH = os.getenv("SSL_KEY_PATH", "certs/key.pem")

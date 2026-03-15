@@ -10,9 +10,6 @@ import os
 import json
 import re
 from google import genai
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Create Gemini client (auto-picks up GEMINI_API_KEY env var)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -208,15 +205,6 @@ def _call_llm_for_code(full_prompt):
             "output_tokens": usage.candidates_token_count,
             "total_tokens": usage.total_token_count
         }
-
-        # Remove markdown code fences if present
-        if code.startswith("```"):
-            lines = code.split("\n")
-            if lines[-1].strip() == "```":
-                lines = lines[1:-1]
-            else:
-                lines = lines[1:]
-            code = "\n".join(lines)
 
         return code, usage_dict
     except Exception as e:
