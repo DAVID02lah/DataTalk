@@ -4,7 +4,7 @@ server.py — Flask API server for Data Talk.
 Serves static HTML files and provides REST API endpoints for:
 - User authentication (Supabase Auth)
 - File upload
-- Gemini chat analysis
+- Gemini chat analysis (streaming + non-streaming)
 - Dashboard config save/load
 
 All /api/* data routes are protected by @require_auth.
@@ -18,7 +18,6 @@ import os
 import re
 import json
 import time
-import hashlib
 import logging
 from flask import Flask, request, jsonify, send_from_directory, g, Response, stream_with_context
 from flask_cors import CORS
@@ -32,14 +31,17 @@ import code_executor
 import auth_service
 from auth_service import require_auth
 
-# --- Flask App Setup ---
+
+# ==============================================================
+# Flask App Setup
+# ==============================================================
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
 app.config["MAX_CONTENT_LENGTH"] = app_config.MAX_CONTENT_LENGTH
 
 cors_origins = app_config.get_allowed_cors_origins()
 CORS(app, resources={r"/api/*": {"origins": cors_origins}})
-
 
 logger = logging.getLogger("data_talk")
 logging.basicConfig(
@@ -64,15 +66,35 @@ ALLOWED_STATIC_PREFIXES = (
 )
 
 
+# ==============================================================
+# Helpers: Logging
+# ==============================================================
+
 def _log_event(event, **fields):
     """Emit one-line structured logs for easier filtering."""
     payload = {"event": event, **fields}
     logger.info(json.dumps(payload, default=str))
 
 
+def _log_token_usage(usage, label="LLM interaction"):
+    """Log token usage in a structured format."""
+    if not usage:
+        return
+    _log_event("token_usage",
+               label=label,
+               input_tokens=usage.get("input_tokens", 0),
+               output_tokens=usage.get("output_tokens", 0),
+               total_tokens=usage.get("total_tokens", 0))
+
+
+# ==============================================================
+# Helpers: State
+# ==============================================================
+
 def _get_user_state():
     """Get the per-user state for the current authenticated request."""
     return session_mgr.get_state(g.user_id)
+
 
 def _get_dataframe(filename, user_id, state):
     """Get the dataframe from cache or load it from storage."""
@@ -80,33 +102,25 @@ def _get_dataframe(filename, user_id, state):
     if df is not None:
         _log_event("dataframe_cache_hit", user_id=user_id, filename=filename)
         return df
-    
+
     _log_event("dataframe_cache_miss", user_id=user_id, filename=filename)
     df = data_service.load_file(filename, user_id=user_id)
     state.set_cached(filename, "df", df)
     return df
 
-# Removed local path helpers as we use Supabase now
 
+# ==============================================================
+# Helpers: Chat
+# ==============================================================
 
-def _save_chat_history(user_id=None, state=None):
-    """Persist chat history to Supabase for the current user."""
+def _save_chat_history(user_id, state):
+    """Persist chat history to Supabase for the given user."""
     try:
-        # Use provided ID/state if available, otherwise fall back to context objects
-        # We check explicitly to avoid triggering context errors if they are provided.
-        if user_id and state:
-            uid = user_id
-            st = state
-        else:
-            uid = g.user_id
-            st = _get_user_state()
-        
         sb_service = auth_service.get_supabase_service()
-        # Upsert into chat_sessions table
         sb_service.table("chat_sessions").upsert({
-            "user_id": uid,
-            "filename": st.active_file.get("filename"),
-            "history": st.chat_histories,
+            "user_id": user_id,
+            "filename": state.active_file.get("filename"),
+            "history": state.chat_histories,
             "updated_at": "now()"
         }, on_conflict="user_id, filename").execute()
     except Exception as e:
@@ -118,13 +132,12 @@ def _load_chat_history_for_user(user_id):
     state = session_mgr.get_state(user_id)
     try:
         sb_service = auth_service.get_supabase_service()
-        # Fetch the most recent chat session for this user
         result = sb_service.table("chat_sessions") \
             .select("filename, history") \
             .eq("user_id", user_id) \
             .order("updated_at", desc=True) \
             .limit(1).execute()
-        
+
         if result.data:
             session = result.data[0]
             state.active_file["filename"] = session.get("filename")
@@ -134,8 +147,209 @@ def _load_chat_history_for_user(user_id):
         logger.error("Chat history load failed from Supabase: %s", e)
 
 
+def _error_response(message, status_code=500, error_type="server_error"):
+    """Return a standardized JSON error with proper HTTP status code."""
+    return jsonify({
+        "error": True,
+        "error_type": error_type,
+        "text": message,
+        "chart": None,
+        "table": None,
+        "stats": None,
+        "followup": [],
+    }), status_code
+
+
+def _sse_event(event, data):
+    """Format a single SSE event string."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+_ERROR_TYPE_TO_HTTP_STATUS = {
+    "file_not_found": 404,
+    "gemini_error": 502,
+    "analysis_error": 500,
+}
+
+
 # ==============================================================
-# Static File Serving
+# Core: Analysis Pipeline
+# ==============================================================
+
+def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
+    """
+    Shared analysis pipeline consumed by both chat() and chat_stream().
+
+    Yields tuples of (event_type, payload):
+      ("phase",  {"phase": "...", "message": "..."})  — progress update
+      ("result", {full result dict})                   — final result
+      ("error",  {"error": True, "text": "...", "error_type": "..."}) — error
+    """
+    try:
+        # --- Cache check ---
+        cache_key = f"{filename}:{message}"
+        if not skip_cache:
+            cached_result = state.query_cache.get(cache_key)
+            if cached_result is not None:
+                cached_result = cached_result.copy()
+                cached_result["cached"] = True
+                _log_event("chat_cache_hit", user_id=user_id, filename=filename)
+                yield ("result", cached_result)
+                return
+
+        # --- Load dataset ---
+        yield ("phase", {"phase": "loading", "message": "Loading dataset..."})
+        df = _get_dataframe(filename, user_id=user_id, state=state)
+
+        history = state.chat_histories.get(user_id, [])
+
+        # --- Build context (cached per file) ---
+        schema_context_lean = state.get_cached(filename, "schema_lean")
+        if schema_context_lean is None:
+            schema_context_lean = data_service.get_schema_string(df, max_tokens=2000)
+            state.set_cached(filename, "schema_lean", schema_context_lean)
+
+        profile = state.get_cached(filename, "profile")
+        if profile is None:
+            profile = data_service.get_data_profile(df)
+            state.set_cached(filename, "profile", profile)
+        profile_context = data_service.get_profile_string(profile)
+        _log_event("profile_detected", dataset_type=profile["dataset_type"])
+
+        # --- Phase 0.5: Extraction ---
+        yield ("phase", {"phase": "extracting", "message": "Extracting relevant data..."})
+        extracted_data_context = None
+        try:
+            _log_event("extraction_started")
+            extraction_code, usage = gemini_service.generate_data_extraction_code(message, schema_context_lean)
+            _log_token_usage(usage, "Extraction")
+            if extraction_code:
+                extracted_data = code_executor.execute_extraction_code(extraction_code, df)
+                if isinstance(extracted_data, dict) and not extracted_data.get("error"):
+                    extracted_data_context = json.dumps(extracted_data, default=str)
+                    _log_event("extraction_succeeded")
+                else:
+                    _log_event("extraction_failed")
+        except Exception as e:
+            _log_event("extraction_warning", error=str(e))
+
+        # --- Phase 1: Code Generation + Execution with Retry ---
+        yield ("phase", {"phase": "generating", "message": "Writing analysis code..."})
+
+        result = None
+        schema_context_full = state.get_cached(filename, "schema_full")
+        if schema_context_full is None:
+            schema_context_full = data_service.get_schema_string(df, max_tokens=15000)
+            state.set_cached(filename, "schema_full", schema_context_full)
+
+        history_capped = history[-app_config.CHAT_HISTORY_CAP:] if history else []
+        generated_code, usage = gemini_service.generate_analysis_code(
+            message, schema_context_full, history_capped, profile_context, extracted_data_context
+        )
+        _log_token_usage(usage, "Code Gen")
+
+        if generated_code:
+            MAX_RETRIES = app_config.MAX_RETRIES
+            for attempt in range(1 + MAX_RETRIES):
+                code_to_run = generated_code if attempt == 0 else last_code
+                if code_to_run is None:
+                    break
+
+                attempt_label = "Initial" if attempt == 0 else f"Retry {attempt}/{MAX_RETRIES}"
+                yield ("phase", {"phase": "executing", "message": f"Running analysis ({attempt_label})..."})
+                _log_event("code_exec_started", attempt=attempt_label, chars=len(code_to_run))
+
+                exec_result = code_executor.execute_analysis_code(code_to_run, df)
+
+                if not exec_result.get("error"):
+                    result = exec_result
+                    result["mode"] = "code_execution"
+                    _log_event("code_exec_succeeded", attempt=attempt_label)
+
+                    # Interpret results
+                    yield ("phase", {"phase": "interpreting", "message": "Interpreting results..."})
+                    _log_event("interpret_started")
+                    interpretation, usage = gemini_service.interpret_results(
+                        message, schema_context_full, exec_result, history_capped
+                    )
+                    _log_token_usage(usage, "Interpret")
+                    if interpretation:
+                        result["text"] = interpretation
+                        _log_event("interpret_succeeded")
+                    else:
+                        _log_event("interpret_failed")
+                    break
+                else:
+                    error_msg = exec_result.get("text", "Unknown error")
+                    _log_event("code_exec_failed", error=error_msg)
+
+                    if attempt < MAX_RETRIES:
+                        yield ("phase", {"phase": "retrying", "message": f"Fixing code (attempt {attempt + 1})..."})
+                        _log_event("retry_started", attempt=attempt + 1, max_retries=MAX_RETRIES)
+                        last_code, usage = gemini_service.retry_analysis_code(
+                            message, schema_context_full, code_to_run, error_msg,
+                            profile_context, extracted_data_context
+                        )
+                        _log_token_usage(usage, "Retry")
+                        if last_code:
+                            _log_event("retry_code_generated", chars=len(last_code))
+                        else:
+                            _log_event("retry_failed")
+                            break
+                    else:
+                        _log_event("retry_exhausted")
+
+        # --- Fallback to text-based analysis ---
+        if result is None:
+            yield ("phase", {"phase": "fallback", "message": "Using text-based analysis..."})
+            _log_event("fallback_analysis_started")
+            data_context = data_service.get_context_string(df, max_rows=5)
+            result = gemini_service.analyze_data(message, data_context, history_capped)
+            _log_token_usage(result.get("usage"), "Fallback Text Analysis")
+            if result.get("error"):
+                yield ("error", {
+                    "error": True,
+                    "text": result.get("text", "AI service encountered an error."),
+                    "error_type": "gemini_error",
+                })
+                return
+            result["mode"] = "text_analysis"
+
+        result["cached"] = False
+
+        # Save to cache
+        state.query_cache.set(cache_key, result)
+
+        # Update chat history
+        history.append({"role": "user", "text": message, "chart": None, "table": None, "stats": None})
+        history.append({
+            "role": "model",
+            "text": result["text"],
+            "chart": result.get("chart"),
+            "table": result.get("table"),
+            "stats": result.get("stats"),
+        })
+        state.chat_histories[user_id] = history
+        _save_chat_history(user_id=user_id, state=state)
+
+        yield ("result", result)
+
+    except FileNotFoundError:
+        yield ("error", {
+            "error": True,
+            "text": f"File '{filename}' not found. Please upload it again.",
+            "error_type": "file_not_found",
+        })
+    except Exception as e:
+        yield ("error", {
+            "error": True,
+            "text": f"Error analyzing data: {str(e)}",
+            "error_type": "analysis_error",
+        })
+
+
+# ==============================================================
+# Routes: Static File Serving
 # ==============================================================
 
 @app.route("/")
@@ -165,7 +379,7 @@ def handle_file_too_large(_err):
 
 
 # ==============================================================
-# API: Authentication
+# Routes: Authentication
 # ==============================================================
 
 @app.route("/api/auth/signup", methods=["POST"])
@@ -207,7 +421,6 @@ def api_login():
     if result.get("error"):
         return jsonify(result), 401
 
-    # Load user state from disk on login
     user_id = result["user"]["id"]
     _load_chat_history_for_user(user_id)
     _log_event("user_login", user_id=user_id, email=email)
@@ -229,7 +442,6 @@ def api_logout():
 @require_auth
 def api_session():
     """Validate the current session and return user info."""
-    # Rehydrate user state from Supabase if not already loaded
     state = _get_user_state()
     if not state.chat_histories and not state.active_file.get("filename"):
         _load_chat_history_for_user(g.user_id)
@@ -254,16 +466,13 @@ def api_session():
 
 
 # ==============================================================
-# API: File Upload
+# Routes: File Management
 # ==============================================================
 
 @app.route("/api/upload", methods=["POST"])
 @require_auth
 def upload_file():
-    """
-    Upload a CSV/Excel file.
-    Returns: filename, column info, row count, preview data.
-    """
+    """Upload a CSV/Excel file. Returns filename, column info, row count, preview data."""
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -271,7 +480,6 @@ def upload_file():
     if file.filename == "":
         return jsonify({"error": "No file selected"}), 400
 
-    # Check extension
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in (".csv", ".xlsx", ".xls"):
         return jsonify({"error": f"Unsupported file type: {ext}. Use CSV or Excel."}), 400
@@ -284,20 +492,15 @@ def upload_file():
         summary = data_service.get_summary(df)
         state.active_file["filename"] = filename
 
-        # Reset chat history and query cache for new file
         state.chat_histories.clear()
         state.query_cache.clear()
         state.clear_file_cache()
-        state.set_cached(filename, "df", df)  # Cache the dataframe immediately after upload
+        state.set_cached(filename, "df", df)
 
         _log_event("file_uploaded", user_id=g.user_id, filename=filename,
                     rows=summary["shape"]["rows"], cols=summary["shape"]["columns"])
 
-        return jsonify({
-            "success": True,
-            "filename": filename,
-            "summary": summary
-        })
+        return jsonify({"success": True, "filename": filename, "summary": summary})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -345,10 +548,7 @@ def get_full_data(filename):
 @app.route("/api/suggest-questions", methods=["GET"])
 @require_auth
 def suggest_questions():
-    """
-    Ask Gemini to suggest 4 smart questions based on the active dataset.
-    Returns: { "questions": ["...", "...", "...", "..."] }
-    """
+    """Ask Gemini to suggest 4 smart questions based on the active dataset."""
     state = _get_user_state()
     filename = state.active_file.get("filename")
     if not filename:
@@ -381,12 +581,7 @@ Return ONLY a JSON array of 4 strings, no other text. Example:
                 "output_tokens": getattr(usage_metadata, "candidates_token_count", 0) or 0,
                 "total_tokens": getattr(usage_metadata, "total_token_count", 0) or 0,
             }
-        _log_token_usage({
-            "input_tokens": usage_dict["input_tokens"],
-            "output_tokens": usage_dict["output_tokens"],
-            "total_tokens": usage_dict["total_tokens"],
-        }, "Suggest Questions")
-
+        _log_token_usage(usage_dict, "Suggest Questions")
 
         text_raw = getattr(response, "text", "")
         text = text_raw.strip() if isinstance(text_raw, str) else ""
@@ -404,44 +599,17 @@ Return ONLY a JSON array of 4 strings, no other text. Example:
 
 
 # ==============================================================
-# Helpers
+# Routes: Chat
 # ==============================================================
 
-def _log_token_usage(usage, label="LLM interaction"):
-    """Print token usage to terminal in a clean format."""
-    if not usage:
-        return
-    input_t = usage.get("input_tokens", 0)
-    output_t = usage.get("output_tokens", 0)
-    total_t = usage.get("total_tokens", 0)
-    _log_event("token_usage", label=label, input_tokens=input_t, output_tokens=output_t, total_tokens=total_t)
-
-
-def _error_response(message, status_code=500, error_type="server_error"):
-    """Return a standardized JSON error with proper HTTP status code."""
-    return jsonify({
-        "error": True,
-        "error_type": error_type,
-        "text": message,
-        "chart": None,
-        "table": None,
-        "stats": None,
-        "followup": [],
-    }), status_code
-
-@app.route("/api/chat", methods=["POST"])
-@require_auth
-def chat():
-    """
-    Send a message to Gemini for data analysis.
-    Body: { "message": "...", "filename": "..." (optional), "skip_cache": false }
-    Returns: { "text": "...", "chart": {...} or null, "cached": bool }
-    """
+def _parse_chat_request():
+    """Parse and validate a chat request. Returns (message, filename, user_id, state, skip_cache) or a Flask error response."""
     data = request.get_json()
     if not data or "message" not in data:
         return jsonify({"error": "No message provided"}), 400
 
-    state = _get_user_state()
+    user_id = g.user_id
+    state = session_mgr.get_state(user_id)
     message = data["message"]
     filename = data.get("filename") or state.active_file.get("filename")
     skip_cache = data.get("skip_cache", False)
@@ -453,367 +621,76 @@ def chat():
             error_type="no_file"
         )
 
-    try:
-
-        # Build cache key from message + filename
-        cache_key = hashlib.md5(f"{filename}:{message}".encode()).hexdigest()
-
-        # Check cache (unless skip_cache is True, used by regenerate)
-        if not skip_cache and cache_key in state.query_cache:
-            cached_result = state.query_cache.get(cache_key)
-            if cached_result:
-                cached_result = cached_result.copy()
-                cached_result["cached"] = True
-                _log_event("chat_cache_hit", user_id=g.user_id, filename=filename)
-                return jsonify(cached_result)
-
-        # Load the full dataset from Supabase
-        df = _get_dataframe(filename, user_id=g.user_id, state=state)
-
-        # Get chat history
-        session_id = g.user_id
-        history = state.chat_histories.get(session_id, [])
-
-        # === Build context (cached per file) ===
-        schema_context_lean = state.get_cached(filename, "schema_lean")
-        if schema_context_lean is None:
-            schema_context_lean = data_service.get_schema_string(df, max_tokens=2000)
-            state.set_cached(filename, "schema_lean", schema_context_lean)
-
-        profile = state.get_cached(filename, "profile")
-        if profile is None:
-            profile = data_service.get_data_profile(df)
-            state.set_cached(filename, "profile", profile)
-        profile_context = data_service.get_profile_string(profile)
-        _log_event("profile_detected", dataset_type=profile["dataset_type"])
-
-        # === Phase 0.5: Extract unique values from relevant columns ===
-        extracted_data_context = None
-        try:
-            _log_event("extraction_started")
-            extraction_code, usage = gemini_service.generate_data_extraction_code(message, schema_context_lean)
-            _log_token_usage(usage, "Extraction")
-            if extraction_code:
-                extracted_data = code_executor.execute_extraction_code(extraction_code, df)
-                if isinstance(extracted_data, dict) and not extracted_data.get("error"):
-                    extracted_data_context = json.dumps(extracted_data, default=str)
-                    _log_event("extraction_succeeded")
-                else:
-                    _log_event("extraction_failed")
-        except Exception as e:
-            _log_event("extraction_warning", error=str(e))
-
-        # === Phase 1: Code Execution Pipeline with Retry ===
-        MAX_RETRIES = app_config.MAX_RETRIES
-        result = None
-        schema_context_full = state.get_cached(filename, "schema_full")
-        if schema_context_full is None:
-            schema_context_full = data_service.get_schema_string(df, max_tokens=15000)
-            state.set_cached(filename, "schema_full", schema_context_full)
-
-        # Initial code generation (with extracted data context)
-        # We cap history to prevent cumulative token bloat
-        history_capped = history[-app_config.CHAT_HISTORY_CAP:] if history else []
-        generated_code, usage = gemini_service.generate_analysis_code(
-            message, schema_context_full, history_capped, profile_context, extracted_data_context
-        )
-        _log_token_usage(usage, "Code Gen")
-
-        if generated_code:
-            for attempt in range(1 + MAX_RETRIES):
-                code_to_run = generated_code if attempt == 0 else last_code
-
-                if code_to_run is None:
-                    break
-
-                attempt_label = "Initial" if attempt == 0 else f"Retry {attempt}/{MAX_RETRIES}"
-                _log_event("code_exec_started", attempt=attempt_label, chars=len(code_to_run))
-
-                exec_result = code_executor.execute_analysis_code(code_to_run, df)
-
-                if not exec_result.get("error"):
-                    result = exec_result
-                    result["mode"] = "code_execution"
-                    _log_event("code_exec_succeeded", attempt=attempt_label)
-
-                    # === Send results to Gemini for interpretation ===
-                    _log_event("interpret_started")
-                    interpretation, usage = gemini_service.interpret_results(
-                        message, schema_context_full, exec_result, history_capped
-                    )
-                    _log_token_usage(usage, "Interpret")
-                    if interpretation:
-                        result["text"] = interpretation
-                        _log_event("interpret_succeeded")
-                    else:
-                        _log_event("interpret_failed")
-
-                    break  # Success — exit retry loop
-                else:
-                    error_msg = exec_result.get("text", "Unknown error")
-                    _log_event("code_exec_failed", error=error_msg)
-
-                    if attempt < MAX_RETRIES:
-                        # Retry: send the error back to Gemini for fixing
-                        _log_event("retry_started", attempt=attempt + 1, max_retries=MAX_RETRIES)
-                        last_code, usage = gemini_service.retry_analysis_code(
-                            message, schema_context_full, code_to_run, error_msg, profile_context, extracted_data_context
-                        )
-                        _log_token_usage(usage, "Retry")
-                        if last_code:
-                            _log_event("retry_code_generated", chars=len(last_code))
-                        else:
-                            _log_event("retry_failed")
-                            break
-                    else:
-                        _log_event("retry_exhausted")
-
-        # === Phase 2: Fallback to text-based analysis ===
-        if result is None:
-            _log_event("fallback_analysis_started")
-            data_context = data_service.get_context_string(df, max_rows=5) # Also lean fallback
-            result = gemini_service.analyze_data(message, data_context, history_capped)
-            _log_token_usage(result.get("usage"), "Fallback Text Analysis")
-            if result.get("error"):
-                return _error_response(
-                    result.get("text", "AI service encountered an error."),
-                    status_code=502,
-                    error_type="gemini_error"
-                )
-            result["mode"] = "text_analysis"
-
-        result["cached"] = False
-
-        # Save to cache
-        state.query_cache.set(cache_key, result)
-
-        # Update chat history (include chart/table/stats for re-rendering)
-        history.append({"role": "user", "text": message, "chart": None, "table": None, "stats": None})
-        history.append({"role": "model", "text": result["text"], "chart": result.get("chart", None),
-                         "table": result.get("table", None), "stats": result.get("stats", None)})
-        state.chat_histories[session_id] = history
-        _save_chat_history()
-
-        return jsonify(result)
-
-    except FileNotFoundError:
-        return _error_response(
-            f"File '{filename}' not found. Please upload it again.",
-            status_code=404,
-            error_type="file_not_found"
-        )
-    except Exception as e:
-        return _error_response(
-            f"Error analyzing data: {str(e)}",
-            status_code=500,
-            error_type="analysis_error"
-        )
+    return message, filename, user_id, state, skip_cache
 
 
-# ==============================================================
-# API: Chat (SSE Streaming)
-# ==============================================================
+@app.route("/api/chat", methods=["POST"])
+@require_auth
+def chat():
+    """
+    Non-streaming chat endpoint.
+    Body: { "message": "...", "filename": "..." (optional), "skip_cache": false }
+    Returns: { "text": "...", "chart": {...} or null, "cached": bool }
+    """
+    parsed = _parse_chat_request()
+    if isinstance(parsed, tuple) and len(parsed) == 2:
+        return parsed  # Error response
+    message, filename, user_id, state, skip_cache = parsed
 
-def _sse_event(event, data):
-    """Format a single SSE event string."""
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    for event_type, payload in _run_analysis_pipeline(message, filename, user_id, state, skip_cache):
+        if event_type == "result":
+            return jsonify(payload)
+        if event_type == "error":
+            status = _ERROR_TYPE_TO_HTTP_STATUS.get(payload.get("error_type"), 500)
+            return _error_response(payload["text"], status_code=status, error_type=payload.get("error_type", "server_error"))
+
+    # Defensive guard — pipeline always yields a result or error, so this is unreachable
+    return _error_response("Unexpected pipeline termination.", status_code=500)
 
 
 @app.route("/api/chat/stream", methods=["POST"])
 @require_auth
 def chat_stream():
     """
-    SSE streaming version of chat. Yields real-time phase updates.
+    SSE streaming chat endpoint. Yields real-time phase updates.
     Body: { "message": "...", "filename": "..." (optional), "skip_cache": false }
-    Events:
-      phase  → { "phase": "...", "message": "..." }
-      result → { full result JSON }
-      error  → { "error": "...", "text": "..." }
-      done   → {}
+    Events: phase, result, error, done
     """
-    data = request.get_json()
-    if not data or "message" not in data:
-        return jsonify({"error": "No message provided"}), 400
-
-    # Capture auth context before entering the generator (Flask g is request-local)
-    user_id = g.user_id
-    state = session_mgr.get_state(user_id)
-    message = data["message"]
-    filename = data.get("filename") or state.active_file.get("filename")
-    skip_cache = data.get("skip_cache", False)
-
-    if not filename:
-        return jsonify({"error": "Please upload a dataset first!"}), 400
+    parsed = _parse_chat_request()
+    if isinstance(parsed, tuple) and len(parsed) == 2:
+        return parsed  # Error response
+    message, filename, user_id, state, skip_cache = parsed
 
     def generate():
-        try:
-            # --- Cache check ---
-            cache_key = hashlib.md5(f"{filename}:{message}".encode()).hexdigest()
-            if not skip_cache and cache_key in state.query_cache:
-                cached_result = state.query_cache.get(cache_key)
-                if cached_result:
-                    cached_result = cached_result.copy()
-                    cached_result["cached"] = True
-                    yield _sse_event("result", cached_result)
-                    yield _sse_event("done", {})
-                    return
-
-            # --- Load dataset ---
-            yield _sse_event("phase", {"phase": "loading", "message": "Loading dataset..."})
-            df = _get_dataframe(filename, user_id=g.user_id, state=state)
-
-            session_id = user_id
-            history = state.chat_histories.get(session_id, [])
-
-            # --- Build context ---
-            schema_context_lean = state.get_cached(filename, "schema_lean")
-            if schema_context_lean is None:
-                schema_context_lean = data_service.get_schema_string(df, max_tokens=2000)
-                state.set_cached(filename, "schema_lean", schema_context_lean)
-
-            profile = state.get_cached(filename, "profile")
-            if profile is None:
-                profile = data_service.get_data_profile(df)
-                state.set_cached(filename, "profile", profile)
-            profile_context = data_service.get_profile_string(profile)
-
-            # --- Phase 0.5: Extraction ---
-            yield _sse_event("phase", {"phase": "extracting", "message": "Extracting relevant data..."})
-            extracted_data_context = None
-            try:
-                extraction_code, usage = gemini_service.generate_data_extraction_code(message, schema_context_lean)
-                _log_token_usage(usage, "Extraction")
-                if extraction_code:
-                    extracted_data = code_executor.execute_extraction_code(extraction_code, df)
-                    if isinstance(extracted_data, dict) and not extracted_data.get("error"):
-                        extracted_data_context = json.dumps(extracted_data, default=str)
-            except Exception as e:
-                _log_event("extraction_warning", error=str(e))
-
-            # --- Phase 1: Code Generation ---
-            yield _sse_event("phase", {"phase": "generating", "message": "Writing analysis code..."})
-            MAX_RETRIES = app_config.MAX_RETRIES
-            result = None
-            schema_context_full = state.get_cached(filename, "schema_full")
-            if schema_context_full is None:
-                schema_context_full = data_service.get_schema_string(df, max_tokens=15000)
-                state.set_cached(filename, "schema_full", schema_context_full)
-
-            history_capped = history[-app_config.CHAT_HISTORY_CAP:] if history else []
-            generated_code, usage = gemini_service.generate_analysis_code(
-                message, schema_context_full, history_capped, profile_context, extracted_data_context
-            )
-            _log_token_usage(usage, "Code Gen")
-
-            if generated_code:
-                for attempt in range(1 + MAX_RETRIES):
-                    code_to_run = generated_code if attempt == 0 else last_code
-                    if code_to_run is None:
-                        break
-
-                    # --- Phase 2: Code Execution ---
-                    attempt_label = "Initial" if attempt == 0 else f"Retry {attempt}/{MAX_RETRIES}"
-                    yield _sse_event("phase", {
-                        "phase": "executing",
-                        "message": f"Running analysis ({attempt_label})..."
-                    })
-
-                    exec_result = code_executor.execute_analysis_code(code_to_run, df)
-
-                    if not exec_result.get("error"):
-                        result = exec_result
-                        result["mode"] = "code_execution"
-
-                        # --- Phase 3: Interpretation ---
-                        yield _sse_event("phase", {"phase": "interpreting", "message": "Interpreting results..."})
-                        interpretation, usage = gemini_service.interpret_results(
-                            message, schema_context_full, exec_result, history_capped
-                        )
-                        _log_token_usage(usage, "Interpret")
-                        if interpretation:
-                            result["text"] = interpretation
-                        break
-                    else:
-                        error_msg = exec_result.get("text", "Unknown error")
-                        if attempt < MAX_RETRIES:
-                            yield _sse_event("phase", {
-                                "phase": "retrying",
-                                "message": f"Fixing code (attempt {attempt + 1})..."
-                            })
-                            last_code, usage = gemini_service.retry_analysis_code(
-                                message, schema_context_full, code_to_run, error_msg,
-                                profile_context, extracted_data_context
-                            )
-                            _log_token_usage(usage, "Retry")
-                            if not last_code:
-                                break
-                        else:
-                            break
-
-            # --- Fallback ---
-            if result is None:
-                yield _sse_event("phase", {"phase": "fallback", "message": "Using text-based analysis..."})
-                data_context = data_service.get_context_string(df, max_rows=5)
-                result = gemini_service.analyze_data(message, data_context, history_capped)
-                _log_token_usage(result.get("usage"), "Fallback")
-                if result.get("error"):
-                    yield _sse_event("error", {
-                        "error": True,
-                        "text": result.get("text", "AI service error.")
-                    })
-                    yield _sse_event("done", {})
-                    return
-                result["mode"] = "text_analysis"
-
-            result["cached"] = False
-
-            # Save to cache
-            state.query_cache.set(cache_key, result)
-
-            # Update chat history
-            history.append({"role": "user", "text": message, "chart": None, "table": None, "stats": None})
-            history.append({"role": "model", "text": result["text"], "chart": result.get("chart"),
-                            "table": result.get("table"), "stats": result.get("stats")})
-            state.chat_histories[session_id] = history
-            # Persist chat history to Supabase
-            _save_chat_history(user_id=user_id, state=state)
-
-            yield _sse_event("result", result)
-            yield _sse_event("done", {})
-
-        except FileNotFoundError:
-            yield _sse_event("error", {"error": True, "text": f"File '{filename}' not found. Please upload it again."})
-            yield _sse_event("done", {})
-        except Exception as e:
-            yield _sse_event("error", {"error": True, "text": f"Error analyzing data: {str(e)}"})
-            yield _sse_event("done", {})
+        for event_type, payload in _run_analysis_pipeline(message, filename, user_id, state, skip_cache):
+            yield _sse_event(event_type, payload)
+        yield _sse_event("done", {})
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     })
 
+
 @app.route("/api/chat/history", methods=["GET"])
 @require_auth
 def get_chat_history():
     """Get the current chat history."""
     state = _get_user_state()
-    session_id = g.user_id
-    history = state.chat_histories.get(session_id, [])
-    
-    # Fallback: if in-memory state is empty, try loading from Supabase
+    history = state.chat_histories.get(g.user_id, [])
+
     if not history:
         _load_chat_history_for_user(g.user_id)
         state = _get_user_state()
-        history = state.chat_histories.get(session_id, [])
-    
+        history = state.chat_histories.get(g.user_id, [])
+
     return jsonify({"history": history})
 
 
 @app.route("/api/chat/clear", methods=["POST"])
 @require_auth
 def clear_chat():
-    """Clear chat history (memory + file) and reset active file."""
+    """Clear chat history and reset active file."""
     state = _get_user_state()
     state.chat_histories.clear()
     state.active_file["filename"] = None
@@ -825,6 +702,10 @@ def clear_chat():
         logger.error("Chat history clear failed from Supabase: %s", e)
     return jsonify({"success": True})
 
+
+# ==============================================================
+# Routes: Dashboard
+# ==============================================================
 
 @app.route("/api/dashboard", methods=["GET"])
 @require_auth
@@ -871,16 +752,14 @@ def pin_chart():
 
     try:
         sb_service = auth_service.get_supabase_service()
-        
-        # 1. Fetch current config
+
         result = sb_service.table("dashboard_configs").select("config").eq("user_id", g.user_id).execute()
         config = result.data[0]["config"] if (result.data and len(result.data) > 0) else {"charts": []}
-        
+
         charts_list = config.get("charts", [])
         if not isinstance(charts_list, list):
             charts_list = []
-            
-        # 2. Add new chart
+
         new_chart = {
             "id": f"chart_{int(time.time() * 1000)}",
             "title": data.get("title", "Untitled Chart"),
@@ -890,8 +769,7 @@ def pin_chart():
         }
         charts_list.append(new_chart)
         config["charts"] = charts_list
-        
-        # 3. Save back to Supabase
+
         sb_service.table("dashboard_configs").upsert({
             "user_id": g.user_id,
             "config": config,
@@ -911,18 +789,14 @@ def remove_chart(chart_id):
     """Remove a chart from the dashboard in Supabase."""
     try:
         sb_service = auth_service.get_supabase_service()
-        
-        # 1. Fetch current config
+
         result = sb_service.table("dashboard_configs").select("config").eq("user_id", g.user_id).execute()
         if not result.data or len(result.data) == 0:
             return jsonify({"error": "No dashboard config found"}), 404
-            
+
         config = result.data[0]["config"]
-        
-        # 2. Filter out the chart
         config["charts"] = [c for c in config.get("charts", []) if c.get("id") != chart_id]
-        
-        # 3. Save back to Supabase
+
         sb_service.table("dashboard_configs").upsert({
             "user_id": g.user_id,
             "config": config,
@@ -937,7 +811,7 @@ def remove_chart(chart_id):
 
 
 # ==============================================================
-# Run
+# Server Startup
 # ==============================================================
 
 def _generate_self_signed_cert():
@@ -996,8 +870,7 @@ def _generate_self_signed_cert():
 
 
 if __name__ == "__main__":
-    import ipaddress  # Lazy import for self-signed cert SAN
-
+    import ipaddress
 
     ssl_context = None
     protocol = "http"
