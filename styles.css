@@ -32,18 +32,18 @@
     --accent-color: #f28b82;
     --text-color: #e8eaed;
     --text-light: #9aa0a6;
-    --background: #1a1a2e;
-    --white: #1e1e34;
-    --border-color: #3c3c5a;
-    --surface-primary: #1e1e34;
-    --surface-secondary: rgba(30, 30, 52, 0.9);
-    --surface-tertiary: rgba(30, 30, 52, 0.7);
+    --background: #000000;
+    --white: #121212;
+    --border-color: #2a2a2a;
+    --surface-primary: #121212;
+    --surface-secondary: rgba(18, 18, 18, 0.9);
+    --surface-tertiary: rgba(18, 18, 18, 0.7);
     --surface-hover: rgba(255, 255, 255, 0.06);
     --surface-active: rgba(122, 171, 247, 0.15);
-    --shadow-color: rgba(0, 0, 0, 0.3);
+    --shadow-color: rgba(0, 0, 0, 0.5);
     --code-bg: rgba(255, 255, 255, 0.08);
     --chart-border-top: rgba(255, 255, 255, 0.08);
-    --input-bg: #252542;
+    --input-bg: #1e1e1e;
     color-scheme: dark;
 }
 
@@ -469,9 +469,11 @@ main {
     transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
+.chat-input-wrapper:hover,
 .chat-input-wrapper:focus-within {
     box-shadow: 0 8px 30px rgba(66, 133, 244, 0.15);
     border-color: var(--primary-color);
+    background: var(--surface-primary);
     transform: translateY(-2px);
 }
 

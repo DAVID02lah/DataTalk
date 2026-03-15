@@ -107,6 +107,11 @@ const App = {
         document.documentElement.setAttribute('data-theme', next);
         localStorage.setItem('dt_theme', next);
         App.updateThemeIcon();
+        
+        // Update particle color if canvas exists
+        if (window.updateParticleTheme) {
+            window.updateParticleTheme(next);
+        }
     },
 
     /** Sync the theme toggle button icon. */
@@ -159,7 +164,14 @@ if (canvas) {
     particlesArray = [];
 }
 
-let particleColor = "rgba(0, 0, 0, 0.5)";
+let particleColor = document.documentElement.getAttribute('data-theme') === 'dark' ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.5)";
+
+window.updateParticleTheme = function(theme) {
+    particleColor = theme === 'dark' ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.5)";
+    if (document.getElementById("particle-canvas")) {
+        initParticles();
+    }
+};
 
 let mouse = {
     x: null,
@@ -167,9 +179,26 @@ let mouse = {
     radius: canvas ? (canvas.height / 80) * (canvas.width / 80) : 100,
 };
 
+let mouseTimer = null;
+
 window.addEventListener("mousemove", (event) => {
     mouse.x = event.x;
     mouse.y = event.y;
+
+    if (mouseTimer) {
+        clearTimeout(mouseTimer);
+    }
+    
+    // Stop particle reaction after 150ms of mouse inactivity
+    mouseTimer = setTimeout(() => {
+        mouse.x = null;
+        mouse.y = null;
+    }, 150);
+});
+
+window.addEventListener("mouseout", () => {
+    mouse.x = null;
+    mouse.y = null;
 });
 
 class Particle {
@@ -190,15 +219,19 @@ class Particle {
     update() {
         if (this.x > canvas.width || this.x < 0) this.directionX = -this.directionX;
         if (this.y > canvas.height || this.y < 0) this.directionY = -this.directionY;
-        let dx = mouse.x - this.x;
-        let dy = mouse.y - this.y;
-        let distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance < mouse.radius + this.size) {
-            if (mouse.x < this.x && this.x < canvas.width - this.size * 10) this.x += 10;
-            if (mouse.x > this.x && this.x > this.size * 10) this.x -= 10;
-            if (mouse.y < this.y && this.y < canvas.height - this.size * 10) this.y += 10;
-            if (mouse.y > this.y && this.y > this.size * 10) this.y -= 10;
+        
+        if (mouse.x != null && mouse.y != null) {
+            let dx = mouse.x - this.x;
+            let dy = mouse.y - this.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < mouse.radius + this.size) {
+                if (mouse.x < this.x && this.x < canvas.width - this.size * 10) this.x += 10;
+                if (mouse.x > this.x && this.x > this.size * 10) this.x -= 10;
+                if (mouse.y < this.y && this.y < canvas.height - this.size * 10) this.y += 10;
+                if (mouse.y > this.y && this.y > this.size * 10) this.y -= 10;
+            }
         }
+        
         this.x += this.directionX;
         this.y += this.directionY;
         this.draw();

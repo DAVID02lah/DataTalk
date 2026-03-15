@@ -7,45 +7,51 @@ description: Comprehensive guide for understanding and contributing to the Data 
 
 ## Project Overview
 
-**Data Talk** is a web-based data analysis application that allows users to upload CSV/Excel files and interact with a Google Gemini LLM to ask natural language questions about their data. The LLM generates Python code that is executed in a sandboxed environment against the full dataset, producing charts, tables, statistics, and natural language explanations.
+**Data Talk** is a multi-user web-based data analysis application that allows users to upload CSV/Excel files and interact with a Google Gemini LLM to ask natural language questions about their data. The LLM generates Python code that is executed in a sandboxed environment against the full dataset, producing interactive charts, tables, statistics, and natural language explanations. Results stream in real-time via SSE.
 
 ### Key Capabilities
-- Upload CSV/Excel files and preview them in a spreadsheet grid
-- Ask natural language questions about the data (e.g., "Show me sales by region")
-- AI generates and executes Python code to analyze the full dataset
-- Produces interactive Plotly charts, summary tables, and stat cards
-- Charts can be pinned to a PowerBI-like dashboard (Streamlit)
-- Multi-step extraction pipeline for handling noisy/dirty data
-- Token-optimized LLM interactions with monitoring
+- **Authentication**: Supabase Auth with email/password signup, JWT-protected API routes
+- **File Upload**: CSV/Excel files uploaded to Supabase Storage with per-user isolation
+- **AI Chat Analysis**: Natural language questions answered via a multi-phase code generation + execution pipeline
+- **SSE Streaming**: Real-time pipeline progress updates (extracting, generating, executing, interpreting)
+- **Interactive Charts**: Plotly.js charts with annotations, download, pin-to-dashboard, and fullscreen
+- **Dashboard**: Drag-and-drop visualization grid with column resizing, persisted to Supabase
+- **Dark Mode**: Full light/dark theme toggle with localStorage persistence and `prefers-color-scheme` detection
+- **Session Persistence**: Chat history, dashboard configs, and user profiles stored in Supabase PostgreSQL
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        FRONTEND                             │
-│  dashboard.html  +  script.js  +  styles.css                │
-│  (Single-page app with sidebar navigation)                  │
-│  Views: Data Connector | Chat Analysis | Visualisations     │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ REST API (fetch)
-┌──────────────────────▼──────────────────────────────────────┐
-│                   BACKEND (Flask)                            │
-│  server.py — Port 5000                                      │
-│  Endpoints: /api/upload, /api/chat, /api/dashboard, etc.    │
-├─────────────────────────────────────────────────────────────┤
-│  gemini_service.py    — Gemini API integration & prompts    │
-│  data_service.py      — Data loading, profiling, schema     │
-│  code_executor.py     — Sandboxed Python code execution     │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────────┐
-│              STREAMLIT DASHBOARD                             │
-│  streamlit_app.py — Port 8501                               │
-│  Renders pinned charts in a PowerBI-style grid              │
-│  Embedded in dashboard.html via iframe                      │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         FRONTEND                                  │
+│  Vanilla HTML / JS / CSS (no framework, no bundler)               │
+│  dashboard.html  +  js/core.js  +  js/data-chat.js               │
+│                  +  js/dashboard-ui.js  +  js/constants.js        │
+│  Views: Data Connector | Chat Analysis | Visualisations           │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │ REST API + SSE (fetch with Bearer JWT)
+┌─────────────────────────▼────────────────────────────────────────┐
+│                    BACKEND (Flask)                                 │
+│  server.py — Port 5000 (configurable)                             │
+│  Endpoints: /api/auth/*, /api/upload, /api/chat/stream,           │
+│             /api/dashboard/*, /api/suggest-questions, etc.         │
+├──────────────────────────────────────────────────────────────────┤
+│  gemini_service.py    — Gemini API integration & LLM prompts      │
+│  data_service.py      — Supabase Storage, data profiling, schema  │
+│  code_executor.py     — Sandboxed Python code execution (AST)     │
+│  auth_service.py      — Supabase Auth, JWT, @require_auth         │
+│  app_state.py         — Per-user SessionManager + QueryCache      │
+│  app_config.py        — Centralized env config + constants        │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │
+┌─────────────────────────▼────────────────────────────────────────┐
+│                  EXTERNAL SERVICES                                 │
+│  Google Gemini (gemini-3.1-flash-lite-preview) — LLM              │
+│  Supabase — Auth + Storage (files) + PostgreSQL (profiles,        │
+│             chat_sessions, dashboard_configs with RLS)             │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -54,158 +60,239 @@ description: Comprehensive guide for understanding and contributing to the Data 
 
 ### Backend (Python)
 
-| File | Purpose |
-|---|---|
-| `server.py` | Flask API server. Serves static files and all REST endpoints. Entry point: `python server.py` (port 5000). |
-| `gemini_service.py` | All Google Gemini API interactions. Contains prompts, code generation, interpretation, and extraction functions. Uses `google-genai` SDK. |
-| `data_service.py` | Data loading (CSV/Excel), summarization, schema generation, data profiling, and column cleaning utilities. |
-| `code_executor.py` | Sandboxed execution of LLM-generated Python code. Only `pandas`, `numpy`, and `json` are available. Dangerous builtins are blocked. |
-| `streamlit_app.py` | Streamlit dashboard for rendering pinned Plotly charts in a responsive grid. Runs on port 8501. |
+| File | Lines | Purpose |
+|---|---|---|
+| `server.py` | ~997 | Flask API server. Serves static files, REST + SSE endpoints. Entry point: `python server.py`. All `/api/*` data routes protected by `@require_auth`. Contains both non-streaming (`/api/chat`) and streaming (`/api/chat/stream`) pipelines. |
+| `gemini_service.py` | ~435 | All Google Gemini API interactions. Contains 3 prompts (`SYSTEM_PROMPT`, `CODE_GEN_PROMPT`, `EXTRACTION_PROMPT`), code generation, interpretation, retry, and fallback functions. Uses `google-genai` SDK. |
+| `data_service.py` | ~454 | Supabase Storage file management (upload, download, list). DataFrame summarization, schema generation (`get_schema_string`), data profiling (`get_data_profile`), column cleaning. |
+| `code_executor.py` | ~317 | Sandboxed execution of LLM-generated Python code. AST validation via `_SafetyVisitor`, 19 blocked builtins, 9 forbidden modules, 14 forbidden attributes, subprocess isolation via `multiprocessing.spawn`, 60s timeout. |
+| `auth_service.py` | ~195 | Supabase Auth integration: signup, login, logout, JWT verification via `getUser()`, profile fetch. Provides `@require_auth` Flask decorator that sets `g.user_id` and `g.user_email`. |
+| `app_state.py` | ~92 | Per-user state management. `SessionManager` (thread-safe) creates `UserState` per `user_id`. `UserState` holds `chat_histories`, `active_file`, `query_cache` (bounded LRU), and `_file_cache` (DataFrame + schema + profile caching). |
+| `app_config.py` | ~61 | Centralized environment variable parsing. All magic numbers configurable: `PORT`, `MAX_UPLOAD_MB`, `MAX_RETRIES`, `CHAT_HISTORY_CAP`, `QUERY_CACHE_SIZE`, `EXEC_TIMEOUT`, Supabase credentials, SSL paths. |
 
 ### Frontend
 
+| File | Lines | Purpose |
+|---|---|---|
+| `dashboard.html` | ~264 | Main SPA shell. Sidebar navigation (3 views), top bar (title, theme toggle, user profile), content area (upload zone, chat, dashboard grid), fullscreen modal. Loads 6 CDN libraries. |
+| `js/constants.js` | ~13 | Frontend configuration constants: chart heights, render timeouts, resize delays. |
+| `js/core.js` | ~389 | App singleton (`App`): auth state, JWT headers, session validation, sign-out, user profile, theme init/toggle. Utilities: `escapeHtml()`, `sanitizeHtml()` (DOMPurify), `renderMarkdown()` (Marked.js). Particle canvas animation. DOM initialization, view switching. |
+| `js/data-chat.js` | ~734 | File upload flow (client-side 10MB validation, FormData POST, Handsontable grid). SSE chat streaming (manual `ReadableStream` parsing, not `EventSource`). Chart rendering (`mountPlotlyChart`), typing indicators, suggestion chips, chat history, annotations, regenerate. |
+| `js/dashboard-ui.js` | ~479 | Dashboard chart pinning, visualization grid, HTML5 drag-and-drop reordering, column-span resizing (1/2/3 cols), fullscreen modal with focus trap + Escape key, chart download (PNG), smart question fetching, data preview panel. |
+| `index.html` | ~67 | Marketing landing page with particle canvas background. |
+| `login.html` | ~332 | Supabase Auth page — sign in/sign up toggle, inline styles + scripts, token storage in localStorage. |
+| `script.js` | ~16 | Legacy backward-compatibility script loader (dynamically loads `core.js`, `data-chat.js`, `dashboard-ui.js`). |
+
+### Stylesheets
+
+| File | Lines | Purpose |
+|---|---|---|
+| `styles.css` | ~566 | Global styles, CSS custom properties (`:root` + `[data-theme="dark"]`), landing page, buttons, hero, responsive breakpoint (768px), suggestion chips. |
+| `dashboard.css` | ~6 | CSS `@import` manifest for the 4 dashboard stylesheets below. |
+| `css/dashboard-layout.css` | ~206 | Dashboard structure: sidebar (260px), top bar, content area, nav items, user profile pill, Handsontable dark mode override. |
+| `css/dashboard-chat.css` | ~340 | Chat messages, avatars, typing indicator (bouncing dots), input bar (glassmorphism), code blocks, chart containers, suggestion chips. |
+| `css/dashboard-grid.css` | ~227 | Visualization grid (CSS Grid, 3-column), chart cards, drag-and-drop states, resize controls, empty state. |
+| `css/dashboard-overlays.css` | ~467 | Upload banner, data preview panel, fullscreen modal, stats cards, data tables, follow-up chips, error banners, annotations, streaming text animation. |
+
+### Configuration & Infrastructure
+
 | File | Purpose |
 |---|---|
-| `dashboard.html` | Main single-page application. Contains all HTML structure, inline CSS for components, and references to `script.js` and `styles.css`. |
-| `script.js` | All frontend JavaScript logic: file upload, chat messaging, chart rendering (Plotly), dashboard pinning, view switching, smart question chips. |
-| `styles.css` | Shared CSS design system with CSS variables, typography, and base styles. |
-| `index.html` | Landing/redirect page. |
-| `login.html` | Login page (not integrated into main flow). |
-
-### Configuration & Startup
-
-| File | Purpose |
-|---|---|
-| `start.bat` | Windows batch script to install dependencies, start Flask (port 5000), start Streamlit (port 8501), and open the browser. |
-| `requirements.txt` | Python dependencies: `flask`, `flask-cors`, `google-genai`, `pandas`, `openpyxl`, `plotly`, `streamlit`, `streamlit-elements`, `python-dotenv`. |
-| `.env` | Contains `GEMINI_API_KEY`. Loaded by `python-dotenv` in `gemini_service.py`. |
-
-### Data Storage
-
-| Path | Purpose |
-|---|---|
-| `uploads/` | Uploaded CSV/Excel files are saved here. |
-| `uploads/chat_history.json` | Persisted chat history (auto-saved). |
-| `uploads/dashboard_config.json` | Pinned chart configurations for the Streamlit dashboard. |
+| `requirements.txt` | 10 Python packages, all pinned to exact versions. |
+| `start.bat` | Windows launcher: Python check, `pip install`, server start, browser open. |
+| `.env` | `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `HTTPS_ENABLED`. |
+| `.gitignore` | Covers `__pycache__/`, `.env`, `uploads/`, `certs/`, `node_modules/`, etc. |
 
 ---
 
 ## Multi-Step Analysis Pipeline
 
-The chat endpoint (`POST /api/chat`) uses a sophisticated multi-step pipeline:
+The chat endpoints (`POST /api/chat` and `POST /api/chat/stream`) use a sophisticated multi-step pipeline:
 
 ### Phase 0.5 — Data Extraction (Lean Schema)
-1. Build a **Lean Schema** using `data_service.get_schema_string(df, max_tokens=2000)` — only column names, types, and 5 sample rows.
+1. Build a **Lean Schema** using `data_service.get_schema_string(df, max_tokens=2000)` — column names, types, and 5 sample rows.
 2. Send to `gemini_service.generate_data_extraction_code()` — LLM writes Python code to extract unique values from relevant columns.
 3. Execute extraction code via `code_executor.execute_extraction_code()`.
-4. The result is a JSON dict of unique values per column (e.g., `{"Country": ["US", "U.S.A.", "United States"]}`).
+4. Result: a JSON dict of unique values per column (e.g., `{"Country": {"US": 150, "UK": 80}}`).
 
 ### Phase 1 — Code Generation (Full Schema)
-1. Build a **Full Schema** using `data_service.get_schema_string(df, max_tokens=15000)` — includes metadata, distributions, correlations, and sample rows.
-2. Send to `gemini_service.generate_analysis_code()` with the extracted data context from Phase 0.5.
-3. Execute the generated Python code against the **full DataFrame** via `code_executor.execute_analysis_code()`.
-4. On failure, retry up to 2 times via `gemini_service.retry_analysis_code()`.
+1. Build a **Full Schema** using `data_service.get_schema_string(df, max_tokens=15000)` — metadata, distributions, correlations, and dynamically-fitted sample rows.
+2. Build a **Data Profile** via `data_service.get_data_profile(df)` — auto-detected dataset type and column roles.
+3. Send to `gemini_service.generate_analysis_code()` with extracted data context from Phase 0.5, profile context, and capped chat history.
+4. Execute generated Python code against the **full DataFrame** via `code_executor.execute_analysis_code()`.
+5. On failure, retry up to `MAX_RETRIES` (default 2) times via `gemini_service.retry_analysis_code()` with error feedback.
 
-### Phase 1.5 — Interpretation
+### Phase 2 — Interpretation
 1. Send execution results back to `gemini_service.interpret_results()`.
 2. LLM generates a natural language explanation of the computed results.
 
-### Phase 2 — Fallback
-If code generation/execution fails entirely, fall back to `gemini_service.analyze_data()` which sends a text summary of the data directly to Gemini for a text-only response.
+### Phase 3 — Fallback
+If code generation/execution fails entirely after all retries, fall back to `gemini_service.analyze_data()` which sends a text summary of the data directly to Gemini for a text-only response.
+
+### Caching Strategy
+- **DataFrame caching**: `_get_dataframe()` in `server.py` checks `UserState._file_cache` before downloading from Supabase. Invalidated on new upload via `clear_file_cache()`.
+- **Schema/profile caching**: `schema_lean`, `schema_full`, and `profile` are cached per file in `UserState._file_cache`. Invalidated together with DataFrame on upload.
+- **Query caching**: `QueryCache` (bounded LRU, default 300 items) keyed by MD5 of `(filename, message)`. Per-user, thread-safe.
 
 ---
 
 ## Token Optimization Strategy
 
-Token usage is a critical concern. The system implements:
-
 | Strategy | Details |
 |---|---|
 | **Lean Schema** | Phase 0.5 uses `max_tokens=2000` (just metadata + 5 rows). Cost: ~1,500-3,000 tokens. |
-| **Full Schema** | Phase 1 uses `max_tokens=15000` with dynamic CSV packing. |
-| **History Capping** | Only the last 5 messages are sent to the LLM (`history[-5:]`). |
-| **Token Logging** | All LLM calls log `[Label] 🔑 Tokens: X in | Y out | Z total` to the terminal via `_log_token_usage()`. |
-| **Programmatic Spotting** | Instead of sending raw data to the LLM, the LLM writes code to programmatically extract unique values, avoiding massive context windows. |
+| **Full Schema** | Phase 1 uses `max_tokens=15000` with dynamic CSV packing (fills remaining budget with rows). |
+| **History Capping** | Only the last `CHAT_HISTORY_CAP` messages (default 5) are sent to the LLM. |
+| **Token Logging** | All LLM calls log token usage via structured `_log_event()`. |
+| **Programmatic Extraction** | Instead of sending raw data, the LLM writes code to extract unique values, avoiding massive context windows. Top 500 values per column with an "Other" bucket. |
+| **Schema Caching** | Lean schema, full schema, and data profile are computed once per file and cached in `UserState._file_cache`. |
 
 ---
 
 ## Key Conventions
 
+### Authentication (`auth_service.py`)
+
+- **Supabase Auth**: Email/password signup and login.
+- **Two clients**: `get_supabase()` (anon key, for auth operations) and `get_supabase_service()` (service role key, bypasses RLS for profile/data queries).
+- **JWT verification**: `verify_token(access_token)` calls Supabase `auth.get_user()` on every request. No local JWT caching.
+- **`@require_auth` decorator**: Verifies `Authorization: Bearer <token>` header. Sets `g.user_id` and `g.user_email` on success. Returns 401 on failure.
+- **Token storage (frontend)**: `dt_access_token`, `dt_refresh_token`, `dt_user` in `localStorage`.
+
 ### Gemini Service (`gemini_service.py`)
 
-- **Model**: Defined in `MODEL_ID` constant (currently `gemini-3.1-flash-lite-preview`).
+- **Model**: Defined in `MODEL_ID` constant (default `gemini-3.1-flash-lite-preview`, overridable via `GEMINI_MODEL_ID` env var).
 - **Client**: Uses `google-genai` SDK (`genai.Client`), NOT the deprecated `google-generativeai`.
-- **All LLM functions return a tuple**: `(result, usage_metadata)` where `usage_metadata` is a dict with `input_tokens`, `output_tokens`, `total_tokens`.
-- **Prompts**: There are 3 main prompts:
-  - `SYSTEM_PROMPT` — For text-based analysis (`analyze_data`).
-  - `CODE_GEN_PROMPT` — For Python code generation (`generate_analysis_code`).
-  - `EXTRACTION_PROMPT` — For data extraction code (`generate_data_extraction_code`).
-- **Safety checks in prompts**: The `CODE_GEN_PROMPT` includes explicit instructions to ALWAYS check if DataFrames/collections are empty before accessing elements via `.iloc[0]`.
-- **Code response cleaning**: `_call_llm_for_code()` strips markdown fences and returns raw Python code.
+- **All LLM functions return a tuple**: `(result, usage_metadata)` where `usage_metadata` is `{"input_tokens": N, "output_tokens": N, "total_tokens": N}`.
+- **3 main prompts**:
+  - `SYSTEM_PROMPT` — For text-based fallback analysis (`analyze_data`). Expects JSON response.
+  - `CODE_GEN_PROMPT` — For Python code generation (`generate_analysis_code`). Expects raw Python.
+  - `EXTRACTION_PROMPT` — For data extraction code (`generate_data_extraction_code`). Expects raw Python.
+- **Safety in prompts**: `CODE_GEN_PROMPT` includes explicit instructions to check empty DataFrames before `.iloc[0]` and to avoid `.iterrows()`, `.apply()`, and manual for-loops.
+- **Code cleaning**: `_call_llm_for_code()` strips markdown fences and returns raw Python code.
+- **Response parsing**: `_parse_response()` handles JSON, JSON-in-code-fences, JSON-embedded-in-text, and plain text fallback.
 
 ### Data Service (`data_service.py`)
 
-- **Column name cleaning**: `clean_column_names(df)` removes newlines/tabs from column names. Called automatically in `get_schema_string()` and `get_data_profile()`.
-- **`get_schema_string(df, max_tokens=15000)`**: Generates a structured text context with:
-  - Section 1: Overview (rows × columns)
+- **Storage**: Files uploaded to Supabase Storage bucket `"datasets"` at path `{user_id}/{filename}`.
+- **Column name cleaning**: `clean_column_names(df)` removes newlines/tabs. Called automatically in `get_schema_string()` and `get_data_profile()`.
+- **`get_schema_string(df, max_tokens=15000)`**: Generates structured text context with:
+  - Section 1: Overview (rows x columns)
   - Section 2: Column metadata (dtype, unique count, nulls, top values or numeric stats)
   - Section 3: Correlations (only if `max_tokens >= 5000`)
-  - Section 4: Sample rows (lean mode: 5 rows; full mode: dynamic CSV packing)
-- **`get_data_profile(df)`**: Auto-detects dataset type (`survey`, `time_series`, `financial`, `geographic`, `general`) and column roles (`identifier`, `metric`, `category`, `date`, `text`).
+  - Section 4: Sample rows (lean mode: 5 rows; full mode: dynamic CSV packing within char budget)
+- **`get_data_profile(df)`**: Auto-detects dataset type (`survey`, `time_series`, `transactional`, `categorical`, `numerical`, `general`) and column roles (`timestamp`, `measure`, `category`, `binary`, `ordinal`, `id`, `free_text`). Generates domain-specific analysis suggestions.
 - **`_to_native(val)`**: Converts numpy/pandas types to native Python for JSON serialization.
 
 ### Code Executor (`code_executor.py`)
 
 - **Sandboxed environment**: Only `pd` (pandas), `np` (numpy), `json`, and `math` are available.
-- **Blocked builtins**: `open`, `eval`, `exec`, `compile`, `__import__`, `globals`, `locals`, `getattr`, `setattr`, `delattr`, `breakpoint`, `exit`, `quit`, `input`, `memoryview`.
-- **Expected output**: Code must produce a `result` dict with keys: `text`, `chart` (Plotly JSON or None), `table` (headers/rows or None), `stats` (list of stat cards or None), `followup` (list of follow-up questions).
-- **`execute_analysis_code(code_string, df)`**: For Phase 1 analysis code.
-- **`execute_extraction_code(code_string, df)`**: For Phase 0.5 extraction code (returns arbitrary dict).
+- **5-layer security**:
+  1. Code length cap: 10,000 characters max
+  2. AST validation via `_SafetyVisitor` (blocks imports, forbidden names, forbidden attributes)
+  3. 19 blocked builtins (open, eval, exec, compile, __import__, globals, locals, getattr, setattr, delattr, breakpoint, exit, quit, input, memoryview, classmethod, staticmethod, property, super)
+  4. Subprocess isolation via `multiprocessing.get_context("spawn")`
+  5. Configurable timeout (default 60s) with process termination
+- **Expected output**: Code must produce a `result` dict with keys: `text`, `chart` (Plotly JSON or None), `table` (DataFrame or headers/rows or None), `stats` (list of stat cards or None), `followup` (list of follow-up questions).
+- **`execute_analysis_code(code_string, df)`**: For Phase 1 analysis code. Returns normalized result.
+- **`execute_extraction_code(code_string, df)`**: For Phase 0.5 extraction code. Returns arbitrary dict.
 - **`_normalize_table(table)`**: Converts pandas DataFrames to `{"headers": [...], "rows": [[...]]}` format.
-- **`_deep_convert(obj)`**: Recursively converts numpy types to native Python.
+- **`_deep_convert(obj)`**: Recursively converts numpy/pandas types to native Python (int, float, str, None).
+
+### State Management (`app_state.py`)
+
+- **`SessionManager`**: Thread-safe (via `threading.Lock`). Creates one `UserState` per `user_id`.
+- **`UserState`**: Per-user container holding:
+  - `chat_histories`: `dict[str, list]` — keyed by session_id
+  - `active_file`: `{"filename": str | None}`
+  - `query_cache`: `QueryCache` instance (bounded LRU, default 300 items, thread-safe)
+  - `_file_cache`: `dict[str, dict]` — caches `"df"`, `"schema_lean"`, `"schema_full"`, `"profile"` per filename
+- **Cache invalidation**: `clear_file_cache()` called on new upload and on chat clear.
 
 ### Server (`server.py`)
 
-- **Port**: 5000 (Flask with debug mode).
-- **CORS**: Enabled for all origins.
-- **Static file serving**: Flask serves `dashboard.html`, `script.js`, `styles.css`, etc.
-- **Chat history**: Stored in-memory in `chat_histories` dict, persisted to `uploads/chat_history.json`.
-- **Query cache**: In-memory `query_cache` dict, keyed by MD5 hash of `(filename, message)`.
-- **Token logging**: `_log_token_usage(usage, label)` prints token counts to terminal.
-- **Auto-Insights**: Currently **DISABLED** (both frontend call and backend logic).
+- **Port**: Configurable via `PORT` env var (default 5000).
+- **CORS**: Restricted to configured origins (defaults to localhost).
+- **Static file serving**: Whitelist-based (`ALLOWED_STATIC_FILES` + `ALLOWED_STATIC_PREFIXES`).
+- **Structured logging**: `_log_event(event, **fields)` emits JSON-formatted log lines.
+- **HTTPS support**: Optional self-signed cert generation via `HTTPS_ENABLED=true`.
+- **SSE streaming**: `/api/chat/stream` uses `Response(stream_with_context(generate()), mimetype="text/event-stream")` with events: `phase`, `result`, `error`, `done`.
 
-### Frontend (`script.js` + `dashboard.html`)
+### Frontend (`js/*.js` + `dashboard.html`)
 
-- **API base**: `const API_BASE = "http://localhost:5000"`.
-- **Libraries used** (loaded via CDN):
+- **No framework or bundler**: Vanilla JS with global functions on `window`. Load order: `constants.js` → `core.js` → `data-chat.js` → `dashboard-ui.js`.
+- **`App` singleton**: Global object managing auth state, JWT headers, theme, user profile.
+- **API calls**: All use `fetch()` with `App.getAuthHeaders()` (returns `{Authorization: "Bearer <token>"}`).
+- **CDN libraries** (loaded in `dashboard.html`):
   - Plotly.js 2.35.0 — Chart rendering
-  - Handsontable — Spreadsheet grid for data preview
-  - SheetJS (xlsx) — Client-side Excel parsing
-  - Marked.js — Markdown rendering in chat messages
+  - Handsontable (latest, `non-commercial-and-evaluation` license) — Spreadsheet grid
+  - SheetJS xlsx (latest) — Client-side Excel parsing
+  - Marked.js (latest) — Markdown rendering
+  - DOMPurify 3.2.6 — HTML sanitization
 - **View system**: Three views switched via `switchView(viewName)`: `data`, `chat`, `visuals`.
-- **Chat flow**: `sendMessage()` → POST `/api/chat` → `appendChatMessage()` with chart/table/stats rendering.
-- **Chart actions**: Pin to Dashboard, Download PNG, Expand Fullscreen, Annotate.
-- **Smart questions**: Fetched from `/api/suggest-questions` after file upload.
-- **Particle background**: Canvas-based animated particle effect in the background.
+- **Chat flow**: `sendMessage()` → SSE stream via `ReadableStream` → `appendChatMessage()` with chart/table/stats/followup rendering.
+- **Chart actions**: Pin to Dashboard, Download PNG, Expand Fullscreen, Annotate (click-to-label).
+- **Smart questions**: Fetched from `/api/suggest-questions` after file upload, displayed as chips.
+- **Particle background**: Canvas-based animated particle effect on landing and dashboard pages.
 
 ---
 
 ## REST API Endpoints
 
+### Authentication (no JWT required)
+
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/upload` | Upload a CSV/Excel file |
-| `GET` | `/api/files` | List uploaded files |
+| `POST` | `/api/auth/signup` | Register new user (email, password, display_name) |
+| `POST` | `/api/auth/login` | Authenticate user, returns JWT tokens |
+| `POST` | `/api/auth/logout` | Sign out user (invalidates refresh token) |
+| `GET` | `/api/auth/session` | Validate existing JWT, returns user + profile |
+
+### Data (JWT required — `@require_auth`)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/upload` | Upload CSV/Excel file to Supabase Storage |
+| `GET` | `/api/files` | List uploaded files for current user |
 | `GET` | `/api/data-summary/<filename>` | Get summary stats for a file |
+| `GET` | `/api/data/<filename>` | Get full dataset as JSON (columns + rows) |
 | `GET` | `/api/suggest-questions` | Get 4 AI-generated question suggestions |
-| `POST` | `/api/chat` | Send a message for AI analysis |
-| `GET` | `/api/chat/history` | Get chat history |
-| `POST` | `/api/chat/clear` | Clear chat history |
-| `POST` | `/api/auto-insights` | Auto-insights (currently DISABLED) |
-| `GET` | `/api/dashboard` | Get pinned chart configurations |
-| `POST` | `/api/dashboard/save` | Save dashboard configuration |
-| `POST` | `/api/dashboard/pin` | Pin a single chart |
+
+### Chat (JWT required — `@require_auth`)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/chat` | Send message for AI analysis (non-streaming, JSON response) |
+| `POST` | `/api/chat/stream` | Send message for AI analysis (SSE streaming) |
+| `GET` | `/api/chat/history` | Get persisted chat history from Supabase |
+| `POST` | `/api/chat/clear` | Clear chat history + active file + caches |
+
+### Dashboard (JWT required — `@require_auth`)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/dashboard` | Get dashboard config from Supabase |
+| `POST` | `/api/dashboard` | Save full dashboard config |
+| `POST` | `/api/dashboard/pin` | Pin a single chart to dashboard |
 | `DELETE` | `/api/dashboard/remove/<chart_id>` | Remove a pinned chart |
+
+---
+
+## Supabase Database Schema
+
+### Tables
+
+| Table | Purpose | RLS |
+|---|---|---|
+| `profiles` | User display name, avatar initials. Auto-created via trigger on auth signup. | Yes, per-user |
+| `chat_sessions` | Persisted chat history per user (JSON blob). | Yes, per-user |
+| `dashboard_configs` | Dashboard chart configurations per user (JSON blob). | Yes, per-user |
+
+### Storage
+
+| Bucket | Purpose |
+|---|---|
+| `datasets` | User-uploaded CSV/Excel files. Path: `{user_id}/{filename}`. |
 
 ---
 
@@ -213,10 +300,11 @@ Token usage is a critical concern. The system implements:
 
 - **Font**: `Inter` (Google Fonts), fallback `sans-serif`.
 - **Primary Color**: `#4285f4` (Google Blue).
-- **Color Palette for Charts**: `["#4285f4", "#ea4335", "#fbbc05", "#34a853", "#ff6d01", "#46bdc6", "#7b1fa2", "#c2185b"]`.
+- **Chart Color Palette**: `["#4285f4", "#ea4335", "#fbbc05", "#34a853", "#ff6d01", "#46bdc6", "#7b1fa2", "#c2185b"]`.
 - **Chart Template**: `plotly_white` with `font.family = "Inter, sans-serif"`.
 - **Donut Charts**: Use `hole: 0.4`.
-- **CSS Variables** (defined in `styles.css`): `--primary-color`, `--text-color`, `--text-light`, `--border-color`, `--font-family`.
+- **CSS Variables** (defined in `styles.css` `:root`): `--primary-color`, `--text-color`, `--text-light`, `--border-color`, `--bg-gradient`, `--surface`, `--surface-hover`, `--card-bg`, `--shadow`, `--font-family`.
+- **Dark Mode**: `[data-theme="dark"]` overrides all CSS variables. Toggle in top bar, persisted in `localStorage("theme")`, auto-detects `prefers-color-scheme`.
 - **Glassmorphism**: Sidebar and input bar use `backdrop-filter: blur()` with semi-transparent backgrounds.
 
 ---
@@ -225,26 +313,40 @@ Token usage is a critical concern. The system implements:
 
 ### Quick Start (Windows)
 ```batch
-# Double-click start.bat, or run:
 cd "c:\Users\DAVID\Desktop\Data Talk"
 start.bat
 ```
 
 ### Manual Start
 ```bash
-# Terminal 1: Flask backend
 python server.py
-
-# Terminal 2: Streamlit dashboard
-streamlit run streamlit_app.py --server.port 8501 --server.headless true
-
 # Open browser to http://localhost:5000
 ```
 
 ### Prerequisites
 - Python 3.10+
-- `GEMINI_API_KEY` in `.env` file
+- `.env` file with:
+  - `GEMINI_API_KEY` — Google Gemini API key
+  - `SUPABASE_URL` — Supabase project URL
+  - `SUPABASE_ANON_KEY` — Supabase anon/public key
+  - `SUPABASE_SERVICE_ROLE_KEY` — Supabase service role key (for RLS bypass)
 - Dependencies: `pip install -r requirements.txt`
+
+### Optional Environment Variables
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `5000` | Flask server port |
+| `FLASK_DEBUG` | `false` | Enable Flask debug mode |
+| `HTTPS_ENABLED` | `false` | Enable HTTPS with self-signed certs |
+| `MAX_UPLOAD_MB` | `10` | Max file upload size in MB |
+| `MAX_RETRIES` | `2` | Code generation retry attempts |
+| `CHAT_HISTORY_CAP` | `5` | Max messages sent to LLM |
+| `QUERY_CACHE_SIZE` | `300` | LRU cache max items per user |
+| `EXEC_TIMEOUT` | `60` | Code execution timeout in seconds |
+| `GEMINI_MODEL_ID` | `gemini-3.1-flash-lite-preview` | Gemini model to use |
+| `CORS_ALLOWED_ORIGINS` | `localhost` | Comma-separated allowed origins |
+| `SSL_CERT_PATH` | `certs/cert.pem` | SSL certificate path |
+| `SSL_KEY_PATH` | `certs/key.pem` | SSL private key path |
 
 ---
 
@@ -253,42 +355,59 @@ streamlit run streamlit_app.py --server.port 8501 --server.headless true
 ### Adding a New Analysis Feature
 1. Add/modify the prompt in `gemini_service.py` (e.g., update `CODE_GEN_PROMPT`).
 2. If new execution logic is needed, update `code_executor.py`.
-3. Wire it into `server.py` endpoint.
-4. Update `script.js` to handle new response fields in the frontend.
+3. Wire it into `server.py` — update BOTH `chat()` and `chat_stream()` (they share the same pipeline logic).
+4. Update `js/data-chat.js` to handle new response fields in `appendChatMessage()`.
 
 ### Changing the LLM Model
-1. Update `MODEL_ID` in `gemini_service.py` (line 21).
-2. No other changes needed — all functions reference this constant.
+1. Set `GEMINI_MODEL_ID` env var in `.env`, OR update the default in `gemini_service.py` line 21.
+2. No other changes needed — all functions reference the `MODEL_ID` constant.
 
 ### Adjusting Token Budgets
-1. **Phase 0.5 (Extraction)**: Change `max_tokens=2000` in `server.py` `chat()` function.
-2. **Phase 1 (Analysis)**: Change `max_tokens=15000` in `server.py` `chat()` function.
-3. **Schema default**: Change default param in `data_service.get_schema_string()`.
+1. **Phase 0.5 (Extraction)**: Change `max_tokens=2000` in `server.py` schema calls within `chat()` and `chat_stream()`.
+2. **Phase 1 (Analysis)**: Change `max_tokens=15000` in `server.py` schema calls.
+3. **History cap**: Set `CHAT_HISTORY_CAP` env var or change default in `app_config.py`.
 
 ### Adding a New API Endpoint
-1. Add the Flask route in `server.py`.
-2. Add the frontend `fetch()` call in `script.js`.
-3. Add any UI elements in `dashboard.html`.
+1. Add the Flask route in `server.py` with `@require_auth` decorator.
+2. Access user state via `_get_user_state()` (returns `UserState` for `g.user_id`).
+3. Add the frontend `fetch()` call with `App.getAuthHeaders()` in the appropriate JS file.
+4. Add any UI elements in `dashboard.html`.
 
----
-
-## Known Limitations & Current State
-
-- **Auto-Insights**: Feature is currently **DISABLED** at both frontend (`script.js`) and backend (`server.py`) levels.
-- **Authentication**: `login.html` exists but is not integrated into the main application flow.
-- **Chat history**: Capped to last 5 messages when sent to LLM to prevent token bloat.
-- **Code execution timeout**: No OS-level timeout on Windows (the `signal.SIGALRM` approach only works on Unix).
-- **File types**: Only CSV, XLS, XLSX are supported.
-- **Concurrent users**: Not designed for multi-user — uses in-memory state with a single `active_file`.
+### Adding a New Cached Computation
+1. In `server.py`, use the pattern:
+   ```python
+   value = state.get_cached(filename, "your_key")
+   if value is None:
+       value = compute_expensive_thing(df)
+       state.set_cached(filename, "your_key", value)
+   ```
+2. The cache is automatically invalidated on new upload (`clear_file_cache()` in `upload_file()`).
 
 ---
 
 ## Debugging Tips
 
-- **Terminal logs**: All LLM interactions print token usage: `[Label] 🔑 Tokens: X in | Y out | Z total`.
-- **Pipeline phases**: Watch for `[Extraction]`, `[Code Gen]`, `[Code Exec]`, `[Interpret]`, `[Retry]`, `[Fallback]` log prefixes.
+- **Structured logs**: All events logged as JSON via `_log_event()`. Look for event types: `file_uploaded`, `dataframe_cache_hit`, `dataframe_cache_miss`, `profile_detected`, `extraction_*`, `code_gen_*`, `execution_*`, `interpretation_*`, `chat_*`.
+- **Token usage**: LLM calls log `input_tokens`, `output_tokens`, `total_tokens` in event payloads.
+- **SSE debugging**: Open browser DevTools Network tab, filter by `EventStream` type. Events: `phase` (progress), `result` (final JSON), `error` (failure), `done` (stream end).
 - **Common errors**:
   - `NoneType.__format__`: Usually caused by `NaN` values in numeric stats — handled by `_to_native()` and `_fmt()` in `data_service.py`.
   - `IndexError: index 0 is out of bounds`: LLM code accessing empty DataFrames — mitigated by safety instructions in `CODE_GEN_PROMPT`.
-  - High token counts (>100k): Check `max_tokens` parameter in `get_schema_string()` calls.
-- **Flask debug mode**: Enabled by default — auto-reloads on file changes.
+  - `Code execution timed out`: Subprocess exceeded `EXEC_TIMEOUT`. The LLM likely generated an O(n^2) loop — retry usually produces optimized code.
+  - `Missing or invalid Authorization header`: Frontend not sending JWT. Check `localStorage` for `dt_access_token`.
+  - `Invalid or expired token`: JWT expired. No refresh endpoint exists yet — user must re-login.
+- **Flask debug mode**: Enable via `FLASK_DEBUG=true` in `.env` for auto-reload on file changes.
+
+---
+
+## Known Limitations
+
+- **Dual chat pipeline**: `chat()` and `chat_stream()` duplicate ~360 lines of pipeline logic. Changes must be applied in both.
+- **No rate limiting**: Chat and suggestion endpoints can be abused with rapid requests.
+- **No token refresh**: Expired JWTs require re-authentication (no `/api/auth/refresh` endpoint).
+- **Token verified via network**: Every request calls Supabase `getUser()` API — no local JWT validation.
+- **Desktop-only UI**: No responsive design for the dashboard. Sidebar is fixed 260px, grid is always 3 columns.
+- **File types**: Only CSV, XLS, XLSX are supported.
+- **No data pagination**: Full dataset sent as JSON to frontend — large files cause memory pressure.
+- **CDN dependencies without SRI**: 6 external libraries loaded without Subresource Integrity hashes.
+- **Subprocess per query**: A new Python process is spawned for every chat query — adds 0.5-1s overhead.
