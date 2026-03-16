@@ -46,27 +46,29 @@
 .btn-dash-action {
     padding: 6px 16px;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: 20px;
     background: var(--surface-primary);
     font-size: 0.82rem;
     color: var(--text-color);
+    transition: all 0.2s;
 }
 
 .btn-dash-action:hover {
     border-color: var(--primary-color);
     color: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px var(--shadow-color);
 }
 
 .btn-dash-danger {
-    border-color: rgba(234, 67, 53, 0.2);
     color: #ea4335;
-    background: rgba(234, 67, 53, 0.05);
+    border-color: rgba(234, 67, 53, 0.2);
 }
 
 .btn-dash-danger:hover {
-    border-color: #ea4335;
-    background: #ea4335;
-    color: white;
+    background-color: #ea4335 !important;
+    border-color: #ea4335 !important;
+    color: white !important;
 }
 
 .dashboard-grid {

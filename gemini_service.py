@@ -8,8 +8,11 @@ structured responses that include natural language + Plotly chart JSON.
 
 import os
 import json
+import logging
 import re
 from google import genai
+
+logger = logging.getLogger("data_talk.gemini")
 
 # Create Gemini client (auto-picks up GEMINI_API_KEY env var)
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -19,11 +22,11 @@ MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.1-flash-lite-preview")
 
 
 SYSTEM_PROMPT = """You are DATA TALK AI — an expert data analyst assistant.
-You help users analyze their datasets by perform data processing and answering questions clearly and generating interactive charts.
+You help users analyse their datasets by perform data processing and answering questions clearly and generating interactive charts.
 
-RULES:
-1. Answer the user's question clearly and concisely in natural language.
-2. If the question would benefit from a chart/visualization, generate a Plotly chart specification.
+Core Guidelines:
+1. Always be helpful, concise, and professional.
+2. If the question would benefit from a chart/visualisation, generate a Plotly chart specification.
 3. If the question involves specific data values, comparisons, or breakdowns, also return a summary table.
 4. If a chart is generated, also provide 2-4 key statistical highlights.
 5. ALWAYS format your response as valid JSON with this exact structure:
@@ -74,11 +77,8 @@ IMPORTANT: Return ONLY the JSON object. No markdown code fences, no extra text b
 
 
 CODE_GEN_PROMPT = """You are DATA TALK AI — an expert data analyst assistant.
-You write Python/Pandas code to analyze datasets.
-
-The user has uploaded a dataset loaded as a pandas DataFrame named `df`.
-You will be given the dataset SCHEMA (column names, types, value distributions) but NOT the raw data.
-Your job is to write Python code that analyzes `df` and produces a `result` dict.
+You write Python/Pandas code to analyse datasets.
+Your job is to write Python code that analyses `df` and produces a `result` dict.
 
 RULES:
 1. Write valid Python code using pandas (imported as `pd`) and numpy (imported as `np`).
@@ -116,7 +116,7 @@ result = {
 IMPORTANT: Return ONLY the Python code. No markdown code fences, no extra text."""
 
 
-def analyze_data(question, data_context, chat_history=None):
+def analyse_data(question, data_context, chat_history=None):
     """
     Send a question + data context to Gemini and get back a structured response.
 
@@ -164,7 +164,7 @@ def analyze_data(question, data_context, chat_history=None):
     except Exception as e:
         return {
             "error": True,
-            "text": f"Sorry, I encountered an error while analyzing your data: {str(e)}",
+            "text": f"Sorry, I encountered an error while analysing your data: {str(e)}",
             "chart": None,
             "usage": None
         }
@@ -208,7 +208,7 @@ def _call_llm_for_code(full_prompt):
 
         return code, usage_dict
     except Exception as e:
-        print(f"[Code Gen Error] {e}")
+        logger.error("Code generation error: %s", e)
         raise RuntimeError(f"Failed to generate code: {e}")
 
 
@@ -368,7 +368,7 @@ Return ONLY the explanation text, no JSON, no code fences."""
             "total_tokens": usage.total_token_count
         }
     except Exception as e:
-        print(f"[Interpret Error] {e}")
+        logger.error("Interpretation error: %s", e)
         raise RuntimeError(f"Failed to interpret results: {e}")
 
 

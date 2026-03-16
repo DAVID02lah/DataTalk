@@ -201,7 +201,7 @@ def execute_analysis_code(code_string, df):
     if len(code_string) > MAX_CODE_LENGTH:
         return _error_result(
             "The generated code is too large (over 10,000 characters). "
-            "This usually means the AI tried to hardcode the dataset instead of analyzing it. "
+            "This usually means the AI tried to hardcode the dataset instead of analysing it. "
             "Falling back to text-based analysis."
         )
 

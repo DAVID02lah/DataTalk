@@ -43,12 +43,12 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px;
-    border-radius: 8px;
+    padding: 10px 16px;
+    border-radius: 20px;
     color: var(--text-light);
     text-decoration: none;
-    transition: all 0.2s;
-    margin-bottom: 4px;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    margin-bottom: 6px;
     cursor: pointer;
     font-weight: 500;
     border: 1px solid transparent;
@@ -58,11 +58,29 @@ body {
     background: var(--surface-primary);
     border-color: var(--primary-color);
     color: var(--primary-color);
+    border-color: var(--primary-color);
     transform: translateY(-1px);
+    box-shadow: 0 4px 12px var(--shadow-color);
+}
+
+.nav-item.active {
+    background: var(--surface-primary);
+    color: var(--primary-color);
+    border-color: var(--primary-color);
     box-shadow: 0 2px 8px var(--shadow-color);
 }
 
+.nav-item-danger {
+    color: #ea4335 !important;
+    border: 1px solid transparent !important;
+}
 
+.nav-item-danger:hover {
+    color: white !important;
+    border-color: #ea4335 !important;
+    background: #ea4335 !important;
+    box-shadow: 0 4px 12px rgba(234, 67, 53, 0.15) !important;
+}
 
 .nav-icon {
     width: 20px;
