@@ -92,7 +92,6 @@ flowchart TD
         C2 --> C2B["_parse_chat_request()<br>Validate & extract params"]
         C2B --> C3{Cache Hit?<br>per-user LRU cache}
         C3 -->|Yes| C12[Return Cached Result<br>with cached badge]
-
         C3 -->|No| C4["Phase 0.5: Data Extraction<br>gemini_service.generate_data_extraction_code()<br>→ SSE: event=phase"]
         C4 --> C5["code_executor.execute_extraction_code()<br>Extract unique values from categorical columns"]
 
@@ -275,7 +274,7 @@ graph TD
 | 6 | **Sandbox Escape Residual Risk** | While AST validation blocks known dangerous patterns, `type()`, `vars()`, `dir()`, and `hasattr()` remain in safe builtins. No memory or CPU limits on subprocess — malicious code could consume excessive resources. | `code_executor.py` |
 | 7 | **No Token Refresh Endpoint** | The server returns `refresh_token` on login, but no endpoint exists to refresh an expired access token. Users must re-authenticate when tokens expire. | `auth_service.py` |
 | 8 | **Token Verified via Network on Every Request** | `verify_token()` calls Supabase `getUser()` API on every authenticated request. No local JWT validation or caching. Adds latency and creates a dependency on Supabase availability. | `auth_service.py` line 130 |
-| 9 | **Duplicate Supabase Config** | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are read independently in both `app_config.py` and `auth_service.py`. Inconsistency risk if only one is updated. | `app_config.py`, `auth_service.py` |
+| 9 | ~~**Duplicate Supabase Config**~~ | **RESOLVED** — Removed dead Supabase constants from `app_config.py`. `auth_service.py` is the single source of truth for Supabase credentials. Redundant `load_dotenv()` calls also removed from `auth_service.py` and `gemini_service.py` (kept only in `server.py`). | `app_config.py`, `auth_service.py` |
 
 ### 7.3 Performance Issues
 
