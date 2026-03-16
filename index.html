@@ -4,36 +4,56 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data Talk - Understand your data fast</title>
+    <title>Data Talk | Understand your data with AI</title>
     <meta name="description"
-        content="AI powered natural Language data analysis platform. Visualize your data with simple conversation.">
+        content="AI powered natural language data analysis platform. Visualise your data with simple conversation.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Modern Hero Scroller Animation */
+        @keyframes float {
+            0% {
+                transform: translateY(0px);
+            }
+
+            50% {
+                transform: translateY(-20px);
+            }
+
+            100% {
+                transform: translateY(0px);
+            }
+        }
+
+        .floating-asset {
+            animation: float 6s ease-in-out infinite;
+        }
+    </style>
 </head>
 
 <body>
     <header class="site-header">
-        <div class="container">
-            <a href="#" class="logo">
+        <div class="container" style="display: flex; justify-content: space-between; align-items: center;">
+            <a href="index.html" class="logo">
                 <div class="logo-icon">
-                    <!-- Simple CSS Pie Chart Icon -->
                     <div class="pie-slice"></div>
                 </div>
                 DATA TALK
             </a>
             <nav class="main-nav">
                 <ul>
-                    <li><a href="#">Products</a></li>
-                    <li><a href="#">Features</a></li>
-                    <li><a href="#">Pricing</a></li>
-                    <li><a href="#">Support</a></li>
+                    <li><a href="#how-it-works">How it works</a></li>
+                    <li><a href="#features">Features</a></li>
+                    <li><a href="#pricing">Pricing</a></li>
                 </ul>
             </nav>
             <div class="header-actions">
-                <a href="#" class="btn btn-outline">Start free trial</a>
-                <a href="login.html" class="btn btn-primary">Sign In</a>
+                <a href="login.html" class="btn btn-outline">Log in</a>
+                <a href="login.html" class="btn btn-primary">Start Analysing</a>
             </div>
             <button class="mobile-menu-btn" aria-label="Toggle menu">
                 <span></span>
@@ -43,26 +63,231 @@
         </div>
     </header>
 
-    <canvas id="particle-canvas"></canvas>
     <main>
-        <section class="hero-section">
-            <div class="container">
-                <div class="hero-content">
-                    <h1>Understand your data fast</h1>
-                    <p class="hero-subhead">AI powered natural Language data analysis platform</p>
-                    <a href="#" class="btn btn-primary btn-lg">Start using DATA TALK</a>
-                    <p class="hero-footnote">Visualize your data with simple conversation</p>
-                </div>
-                <div class="hero-image">
-                    <img src="assets/hero_illustration.svg" alt="Data visualization illustration" id="hero-img">
+        <!-- Hero Section -->
+        <section class="section hero-section">
+            <canvas id="particle-canvas"></canvas>
+            <div class="container" style="flex-direction: column; display: flex; align-items: center;">
+                <h1
+                    style="font-size: 5.5rem; line-height: 1; margin-bottom: 24px; max-width: 900px; text-align: center;">
+                    Understand your
+                    data <span style="color: var(--primary-color);">fast.</span></h1>
+                <p class="hero-subhead"
+                    style="font-size: 1.5rem; max-width: 600px; margin-bottom: 48px; text-align: center;">The AI-powered
+                    data partner for people who hate spreadsheets. Talk to your data, get answers in seconds.</p>
+                <div style="display: flex; gap: 20px; margin-bottom: 80px;">
+                    <a href="login.html" class="btn btn-primary btn-lg">Start for free</a>
+                    <a href="#how-it-works" class="btn btn-outline btn-lg">See how it works</a>
                 </div>
             </div>
         </section>
+
+        <!-- Bento How it Works -->
+        <section id="how-it-works" class="section">
+            <div class="container">
+                <h2 class="section-title">Analysis made <span style="color: var(--primary-color);">simple.</span></h2>
+                <div class="bento-grid">
+                    <div class="bento-item col-8" style="background-color: var(--bento-bg-1);">
+                        <div>
+                            <h3>Natural Conversation</h3>
+                            <p>Ask anything about your data in plain English. No SQL, no formulas, just talk.</p>
+                        </div>
+                        <img src="assets/dt_data_jar_analysis_1773579777052.png" alt="Data Jar"
+                            style="width: 280px; margin-top: 40px;">
+                    </div>
+                    <div class="bento-item col-4" style="background-color: var(--bento-bg-2);">
+                        <div>
+                            <h3>Secure Storage</h3>
+                            <p>Your data is encrypted and protected with enterprise-grade security.</p>
+                        </div>
+                        <img src="assets/dt_storage_character_1773579843387.png" alt="Secure Cloud"
+                            style="width: 180px;">
+                    </div>
+                    <div class="bento-item col-4"
+                        style="background-color: var(--bento-bg-2); border: 1px dashed var(--primary-color);">
+                        <div>
+                            <h3>Smart Sheets</h3>
+                            <p>Connect your spreadsheets effortlessly and watch the magic happen.</p>
+                        </div>
+                        <img src="assets/dt_spreadsheet_character_1773579876477.png" alt="Spreadsheet Character"
+                            style="width: 180px;">
+                    </div>
+                    <div class="bento-item col-8" style="background-color: var(--bento-bg-3);">
+                        <div>
+                            <h3>Stunning Visuals</h3>
+                            <p>Generate beautiful charts and dashboards automatically. Ready for your next presentation.
+                            </p>
+                        </div>
+                        <img src="assets/dt_chart_character_1773579858332.png" alt="Chart Pen" style="width: 320px;">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Dark Feature Section -->
+        <section id="features" class="section section-dark">
+            <div class="container" style="display: flex; align-items: center; gap: 80px; padding: 100px 0;">
+                <div style="flex: 1;">
+                    <h2 class="section-title" style="text-align: left; margin-bottom: 30px;">Powerful AI at <br>your
+                        fingertips</h2>
+                    <p style="font-size: 1.25rem; opacity: 0.8; margin-bottom: 40px;">Data Talk leverages the latest
+                        LLMs to understand complex relationships in your datasets, providing insights you might have
+                        missed.</p>
+                    <ul style="list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <li>🚀 Real-time Processing</li>
+                        <li>📊 Auto-Chart Selection</li>
+                        <li>🔍 Deep Pattern Recognition</li>
+                        <li>🔄 Live Data Sync</li>
+                    </ul>
+                </div>
+                <div style="flex: 1; display: flex; justify-content: center;">
+                    <img src="assets/dt_thinking_character_1773579811475.png" alt="Thinking AI" class="thinking-img"
+                        style="width: 400px;">
+                </div>
+            </div>
+        </section>
+
+        <!-- Pricing Section -->
+        <section id="pricing" class="section">
+            <div class="container">
+                <h2 class="section-title">Pricing that <span style="color: var(--primary-color);">scales.</span></h2>
+                <div class="bento-grid">
+                    <div class="bento-item col-4">
+                        <div>
+                            <span
+                                style="text-transform: uppercase; font-weight: 800; font-size: 1.5rem; color: var(--text-light);">Basic</span>
+                            <h3 style="font-size: 2.5rem; margin: 10px 0;">RM 9 <span
+                                    style="font-size: 1rem; opacity: 0.6;">/mo</span></h3>
+                            <ul
+                                style="list-style: none; margin: 20px 0; display: flex; flex-direction: column; gap: 10px;">
+                                <li>✓ Basic Rate Limit</li>
+                                <li>✓ 10-column Limit</li>
+                                <li>✓ 1 MB file limit</li>
+                                <li>✓ Basic Charts</li>
+                            </ul>
+                        </div>
+                        <a href="login.html" class="btn btn-outline" style="width: 100%;">Cheap Ass</a>
+                    </div>
+                    <div class="bento-item col-4"
+                        style="border: 2px solid var(--primary-color); transform: scale(1.05); z-index: 2; position: relative;">
+                        <div class="badge-recommended">Best Value</div>
+                        <div>
+                            <span
+                                style="text-transform: uppercase; font-weight: 800; font-size: 2rem; color: var(--primary-color);">Pro</span>
+                            <h3 style="font-size: 2.5rem; margin: 10px 0;">RM 29 <span
+                                    style="font-size: 1rem; opacity: 0.6;">/mo</span></h3>
+                            <ul
+                                style="list-style: none; margin: 20px 0; display: flex; flex-direction: column; gap: 10px;">
+                                <li>✓ Higher Rate Limit</li>
+                                <li>✓ Unlimited Projects</li>
+                                <li>✓ Advanced AI Analysis</li>
+                                <li>✓ 10 MB file limit</li>
+                                <li>✓ Advanced Charts</li>
+                                <li>✓ Custom Dashboards</li>
+                            </ul>
+                        </div>
+                        <a href="login.html" class="btn btn-primary" style="width: 100%;">Go Pro</a>
+                    </div>
+                    <div class="bento-item col-4">
+                        <div>
+                            <span
+                                style="text-transform: uppercase; font-weight: 800; font-size: 1.5rem; color: var(--text-light);">Team</span>
+                            <h3 style="font-size: 2.5rem; margin: 10px 0;">RM 99 <span
+                                    style="font-size: 1rem; opacity: 0.6;">/mo</span></h3>
+                            <ul
+                                style="list-style: none; margin: 20px 0; display: flex; flex-direction: column; gap: 10px;">
+                                <li>✓ Shared Workspaces</li>
+                                <li>✓ Team Permissions</li>
+                                <li>✓ Priority Support</li>
+                            </ul>
+                        </div>
+                        <a href="login.html" class="btn btn-navy" style="width: 100%;">Contact Sales</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ Section -->
+        <section class="section faq-section">
+            <div class="container">
+                <h2 class="faq-title">Faqs</h2>
+                <div class="faq-list">
+                    <div class="faq-item">
+                        <div class="faq-question">
+                            <span>How is Data Talk different from other analysis tools?</span>
+                            <span class="faq-icon">▼</span>
+                        </div>
+                        <div class="faq-answer">
+                            <p>Unlike BI tools that require SQL knowledge or complex spreadsheet formulas,
+                                Data Talk allows you to analyse data using plain English. Our AI model understands
+                                context and automatically chooses the best visualisations for your insights.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item">
+                        <div class="faq-question">
+                            <span>Is my data secure and private?</span>
+                            <span class="faq-icon">▼</span>
+                        </div>
+                        <div class="faq-answer">
+                            <p>Absolutely. Your data is encrypted at rest and in transit. We don't use your private data
+                                to train our global models, and you have complete control over your datasets at all
+                                times.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item">
+                        <div class="faq-question">
+                            <span>Which file formats are supported?</span>
+                            <span class="faq-icon">▼</span>
+                        </div>
+                        <div class="faq-answer">
+                            <p>Currently, we support CSV and Excel (.xlsx) files. We are actively working on adding
+                                support for more formats and direct database connectors in the near future.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item">
+                        <div class="faq-question">
+                            <span>Can I export my charts and reports?</span>
+                            <span class="faq-icon">▼</span>
+                        </div>
+                        <div class="faq-answer">
+                            <p>Yes! You can download any generated chart as a high-quality PNG image. You can also pin
+                                them to your personal dashboard for later reference or presentation.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <script>
+            document.querySelectorAll('.faq-item').forEach(item => {
+                item.addEventListener('mouseenter', () => {
+                    item.classList.add('active');
+                });
+                item.addEventListener('mouseleave', () => {
+                    item.classList.remove('active');
+                });
+            });
+        </script>
     </main>
 
+    <footer style="padding: 60px 0; background-color: var(--secondary-color); color: #ffffff;">
+        <div class="container" style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="logo logo-light" style="color: #ffffff;">
+                <div class="logo-icon">
+                    <div class="pie-slice"></div>
+                </div>
+                DATA TALK
+            </div>
+            <p style="opacity: 0.6;">&copy; 2026 Data Talk. All rights reserved.</p>
+            <div style="display: flex; gap: 20px;">
+                <a href="#" style="color: #ffffff; text-decoration: none; opacity: 0.6;">Twitter</a>
+                <a href="https://www.linkedin.com/in/firdausdavidlee/"
+                    style="color: #ffffff; text-decoration: none; opacity: 0.6;">LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+
     <script src="js/core.js"></script>
-    <script src="js/data-chat.js"></script>
-    <script src="js/dashboard-ui.js"></script>
 </body>
 
 </html>

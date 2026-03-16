@@ -363,8 +363,9 @@ async function loadChatHistory() {
         // Switch to message view
         showChatMessages();
 
-        // Render each message
-        for (const msg of history) {
+        // Render each message (API returns newest-first; reverse for chronological UI order)
+        const chronological = [...history].reverse();
+        for (const msg of chronological) {
             const role = msg.role === "user" ? "user" : "ai";
             appendChatMessage(role, msg.text, msg.chart || null, msg.table || null, msg.stats || null);
         }
@@ -661,14 +662,6 @@ function addAnnotation(chartId, x, y, btnEl) {
 // Typing / Progress Indicator
 // ============================================================
 
-const PROGRESS_PHASES = [
-    "Extracting data...",
-    "Generating analysis code...",
-    "Running analysis...",
-    "Interpreting results...",
-    "Almost done...",
-];
-
 function showTypingIndicator() {
     const container = document.getElementById("chat-messages");
     if (!container) return;
@@ -682,7 +675,7 @@ function showTypingIndicator() {
             <div class="chat-msg-name">Data Talk AI</div>
         </div>
         <div class="typing-indicator">
-            <div class="typing-progress-text">Analyzing your data...</div>
+            <div class="typing-progress-text">Analysing your data...</div>
             <div class="typing-dots">
                 <div class="typing-dot"></div>
                 <div class="typing-dot"></div>

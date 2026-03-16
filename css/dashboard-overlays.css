@@ -368,19 +368,6 @@
     font-family: var(--font-family);
 }
 
-/* Streaming text effect */
-@keyframes fadeInUp {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
 /* Error message banner in chat */
 .chat-error-msg {
     margin-bottom: 24px;

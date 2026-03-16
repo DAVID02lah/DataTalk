@@ -57,7 +57,6 @@ ALLOWED_STATIC_FILES = {
     "login.html",
     "styles.css",
     "dashboard.css",
-    "script.js",
 }
 ALLOWED_STATIC_PREFIXES = (
     "assets/",
@@ -109,6 +108,22 @@ def _get_dataframe(filename, user_id, state):
     return df
 
 
+def _paginate(items, page=1, per_page=app_config.DEFAULT_PAGE_SIZE):
+    """Apply offset/limit pagination to a list and return paginated result with metadata."""
+    total = len(items)
+    per_page = max(1, min(per_page, app_config.MAX_PAGE_SIZE))
+    total_pages = max(1, -(-total // per_page))
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    return {
+        "items": items[start:start + per_page],
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "total_pages": total_pages,
+    }
+
+
 # ==============================================================
 # Helpers: Chat
 # ==============================================================
@@ -148,7 +163,7 @@ def _load_chat_history_for_user(user_id):
 
 
 def _error_response(message, status_code=500, error_type="server_error"):
-    """Return a standardized JSON error with proper HTTP status code."""
+    """Return a standardised JSON error with proper HTTP status code."""
     return jsonify({
         "error": True,
         "error_type": error_type,
@@ -304,7 +319,7 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
             yield ("phase", {"phase": "fallback", "message": "Using text-based analysis..."})
             _log_event("fallback_analysis_started")
             data_context = data_service.get_context_string(df, max_rows=5)
-            result = gemini_service.analyze_data(message, data_context, history_capped)
+            result = gemini_service.analyse_data(message, data_context, history_capped)
             _log_token_usage(result.get("usage"), "Fallback Text Analysis")
             if result.get("error"):
                 yield ("error", {
@@ -343,7 +358,7 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
     except Exception as e:
         yield ("error", {
             "error": True,
-            "text": f"Error analyzing data: {str(e)}",
+            "text": f"Error analysing data: {str(e)}",
             "error_type": "analysis_error",
         })
 
@@ -509,10 +524,22 @@ def upload_file():
 @app.route("/api/files", methods=["GET"])
 @require_auth
 def list_files():
-    """List all uploaded files for the current user."""
+    """List uploaded files for the current user with pagination."""
     files = data_service.list_uploaded_files(user_id=g.user_id)
     state = _get_user_state()
-    return jsonify({"files": files, "active": state.active_file["filename"]})
+
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", app_config.DEFAULT_PAGE_SIZE, type=int)
+    result = _paginate(files, page, per_page)
+
+    return jsonify({
+        "files": result["items"],
+        "active": state.active_file["filename"],
+        "page": result["page"],
+        "per_page": result["per_page"],
+        "total": result["total"],
+        "total_pages": result["total_pages"],
+    })
 
 
 @app.route("/api/data-summary/<filename>", methods=["GET"])
@@ -675,7 +702,11 @@ def chat_stream():
 @app.route("/api/chat/history", methods=["GET"])
 @require_auth
 def get_chat_history():
-    """Get the current chat history."""
+    """Get the current chat history with pagination.
+
+    Query params: page (default 1), per_page (default 50).
+    Returns most recent messages first; page 1 = latest messages.
+    """
     state = _get_user_state()
     history = state.chat_histories.get(g.user_id, [])
 
@@ -684,7 +715,19 @@ def get_chat_history():
         state = _get_user_state()
         history = state.chat_histories.get(g.user_id, [])
 
-    return jsonify({"history": history})
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", app_config.DEFAULT_PAGE_SIZE, type=int)
+
+    reversed_history = list(reversed(history))
+    result = _paginate(reversed_history, page, per_page)
+
+    return jsonify({
+        "history": result["items"],
+        "page": result["page"],
+        "per_page": result["per_page"],
+        "total": result["total"],
+        "total_pages": result["total_pages"],
+    })
 
 
 @app.route("/api/chat/clear", methods=["POST"])

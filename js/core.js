@@ -107,7 +107,7 @@ const App = {
         document.documentElement.setAttribute('data-theme', next);
         localStorage.setItem('dt_theme', next);
         App.updateThemeIcon();
-        
+
         // Update particle color if canvas exists
         if (window.updateParticleTheme) {
             window.updateParticleTheme(next);
@@ -159,14 +159,20 @@ let particlesArray;
 
 if (canvas) {
     ctx = canvas.getContext("2d");
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    const parent = canvas.parentElement;
+    if (parent && parent.classList.contains('hero-section')) {
+        canvas.width = parent.offsetWidth;
+        canvas.height = parent.offsetHeight;
+    } else {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
     particlesArray = [];
 }
 
 let particleColor = document.documentElement.getAttribute('data-theme') === 'dark' ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.5)";
 
-window.updateParticleTheme = function(theme) {
+window.updateParticleTheme = function (theme) {
     particleColor = theme === 'dark' ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.5)";
     if (document.getElementById("particle-canvas")) {
         initParticles();
@@ -188,7 +194,7 @@ window.addEventListener("mousemove", (event) => {
     if (mouseTimer) {
         clearTimeout(mouseTimer);
     }
-    
+
     // Stop particle reaction after 150ms of mouse inactivity
     mouseTimer = setTimeout(() => {
         mouse.x = null;
@@ -219,7 +225,7 @@ class Particle {
     update() {
         if (this.x > canvas.width || this.x < 0) this.directionX = -this.directionX;
         if (this.y > canvas.height || this.y < 0) this.directionY = -this.directionY;
-        
+
         if (mouse.x != null && mouse.y != null) {
             let dx = mouse.x - this.x;
             let dy = mouse.y - this.y;
@@ -231,7 +237,7 @@ class Particle {
                 if (mouse.y > this.y && this.y > this.size * 10) this.y -= 10;
             }
         }
-        
+
         this.x += this.directionX;
         this.y += this.directionY;
         this.draw();
@@ -239,12 +245,13 @@ class Particle {
 }
 
 function initParticles() {
+    if (!canvas) return;
     particlesArray = [];
     let numberOfParticles = (canvas.height * canvas.width) / 9000;
     for (let i = 0; i < numberOfParticles; i++) {
         let size = Math.random() * 5 + 1;
-        let x = Math.random() * (innerWidth - size * 4) + size * 2;
-        let y = Math.random() * (innerHeight - size * 4) + size * 2;
+        let x = Math.random() * (canvas.width - size * 4) + size * 2;
+        let y = Math.random() * (canvas.height - size * 4) + size * 2;
         let directionX = Math.random() * 2 - 1;
         let directionY = Math.random() * 2 - 1;
         particlesArray.push(new Particle(x, y, directionX, directionY, size, particleColor));
@@ -252,24 +259,23 @@ function initParticles() {
 }
 
 function connectParticles() {
-    const maxDistanceSq = (canvas.width / 7) * (canvas.height / 7);
-    const maxDist = Math.sqrt(maxDistanceSq);
+    const maxDistance = 150;
+    const maxDistanceSq = maxDistance * maxDistance;
 
     for (let a = 0; a < particlesArray.length; a++) {
         for (let b = a + 1; b < particlesArray.length; b++) {
-            // Early exit using 1D bounding box
             let dx = particlesArray[a].x - particlesArray[b].x;
-            if (Math.abs(dx) > maxDist) continue;
+            if (Math.abs(dx) > maxDistance) continue;
 
             let dy = particlesArray[a].y - particlesArray[b].y;
-            if (Math.abs(dy) > maxDist) continue;
+            if (Math.abs(dy) > maxDistance) continue;
 
             let distanceSq = dx * dx + dy * dy;
 
             if (distanceSq < maxDistanceSq) {
-                let opacity = 1 - distanceSq / 20000;
-                ctx.strokeStyle = particleColor.replace("0.5)", opacity + ")");
-                ctx.lineWidth = 1;
+                let opacity = 1 - (distanceSq / maxDistanceSq);
+                ctx.strokeStyle = particleColor.replace("0.5)", (opacity * 0.3) + ")");
+                ctx.lineWidth = 1.2;
                 ctx.beginPath();
                 ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
                 ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
@@ -282,7 +288,7 @@ function connectParticles() {
 function animateParticles() {
     if (!canvas) return;
     requestAnimationFrame(animateParticles);
-    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (let i = 0; i < particlesArray.length; i++) {
         particlesArray[i].update();
     }
@@ -291,8 +297,14 @@ function animateParticles() {
 
 window.addEventListener("resize", () => {
     if (canvas) {
-        canvas.width = innerWidth;
-        canvas.height = innerHeight;
+        const parent = canvas.parentElement;
+        if (parent && parent.classList.contains('hero-section')) {
+            canvas.width = parent.offsetWidth;
+            canvas.height = parent.offsetHeight;
+        } else {
+            canvas.width = innerWidth;
+            canvas.height = innerHeight;
+        }
         mouse.radius = (canvas.height / 80) ** 2;
         initParticles();
     }

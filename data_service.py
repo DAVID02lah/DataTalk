@@ -338,7 +338,7 @@ def get_data_profile(df):
             "Cross-tabulate key categorical variables to find patterns across demographics",
             "Compute response distributions for each question (value_counts with percentages)",
             "Compare responses across demographic groups (age, gender, location) using groupby",
-            "If ordinal/Likert scales exist, compute mean scores by group and visualize with heatmaps",
+            "If ordinal/Likert scales exist, compute mean scores by group and visualise with heatmaps",
             "Identify correlations between different survey responses",
             "Look for demographic segments with notably different response patterns"
         ])
