@@ -55,6 +55,7 @@ body {
 
 .nav-item:hover {
     background: var(--surface-primary);
+    border-color: var(--primary-color);
     color: var(--primary-color);
     border-color: var(--primary-color);
     transform: translateY(-1px);
@@ -88,10 +89,35 @@ body {
     transition: opacity 0.2s;
 }
 
-.nav-item:hover .nav-icon,
+.nav-item.active {
+    background: var(--surface-active);
+    color: var(--primary-color);
+}
+
+.nav-item.active:hover {
+    background: var(--surface-primary);
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px var(--shadow-color);
+}
+
 .nav-item.active .nav-icon {
     opacity: 1;
 }
+
+.nav-item.nav-danger:hover {
+    background: rgba(234, 67, 53, 0.1);
+    border-color: #ea4335;
+    color: #ea4335;
+}
+
+.nav-item.nav-danger:hover .nav-icon {
+    color: #ea4335;
+    opacity: 1;
+}
+
+
 
 .sidebar-footer {
     margin-top: auto;
