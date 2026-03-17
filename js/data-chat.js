@@ -274,6 +274,7 @@ async function sendMessage(skipCache = false) {
         const decoder = new TextDecoder();
         let buffer = "";
         let finalResult = null;
+        let currentEvent = null;
 
         while (true) {
             const { done, value } = await reader.read();
@@ -283,8 +284,6 @@ async function sendMessage(skipCache = false) {
             const lines = buffer.split("\n");
             // Keep the last (possibly incomplete) line in the buffer
             buffer = lines.pop() || "";
-
-            let currentEvent = null;
             for (const line of lines) {
                 if (line.startsWith("event: ")) {
                     currentEvent = line.slice(7).trim();
@@ -485,7 +484,7 @@ function mountPlotlyChart(chartId, chartJson) {
                 margin: { l: 50, r: 30, t: 50, b: 50 },
             };
             Plotly.newPlot(chartId, chartJson.data, layout, {
-                responsive: true,
+                responsive: false,
                 displayModeBar: true,
                 modeBarButtonsToRemove: ["lasso2d", "select2d"],
             });
@@ -725,3 +724,21 @@ function appendErrorMessage(text) {
 }
 
 // ============================================================
+// Shared chart resize observer — one observer for the whole
+// chat container instead of one ResizeObserver per chart.
+// (Plotly's responsive:false disables the per-chart observers.)
+// ============================================================
+document.addEventListener("DOMContentLoaded", () => {
+    const chatContainer = document.getElementById("chat-messages");
+    if (!chatContainer || typeof ResizeObserver === "undefined") return;
+
+    let _resizeTimer;
+    new ResizeObserver(() => {
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(() => {
+            chatContainer.querySelectorAll('[id^="chat-chart-"]').forEach(el => {
+                if (el._fullLayout) Plotly.Plots.resize(el);
+            });
+        }, 150);
+    }).observe(chatContainer);
+});

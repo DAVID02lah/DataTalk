@@ -7,9 +7,8 @@ subprocess timeout guard.
 
 import ast
 import json
-import multiprocessing
-import queue
 import re
+import threading
 import traceback
 
 import numpy as np
@@ -138,61 +137,62 @@ def _validate_generated_code(code_string):
     _SafetyVisitor().visit(tree)
 
 
-def _execute_in_subprocess(code_string, df, result_queue):
-    """Execute validated code in an isolated subprocess and return result payload."""
-    safe_builtins = _make_safe_builtins()
-    exec_globals = {
-        "__builtins__": safe_builtins,
-        "pd": pd,
-        "pandas": pd,
-        "np": np,
-        "numpy": np,
-        "json": json,
-        "df": df.copy(),
-        "result": None,
-    }
-
-    exec_globals["df"].columns = [
-        re.sub(r"\s+", " ", str(col)).strip() for col in exec_globals["df"].columns
-    ]
-
-    try:
-        compiled = compile(code_string, "<llm_code>", "exec")
-        exec(compiled, exec_globals)
-        result_queue.put({"ok": True, "result": exec_globals.get("result")})
-    except Exception as exc:
-        tb = traceback.format_exc()
-        result_queue.put({"ok": False, "error": str(exc), "traceback": tb})
-
-
 def _run_with_timeout(code_string, df, timeout_seconds):
-    """Run analysis code in a subprocess and force-stop on timeout."""
-    ctx = multiprocessing.get_context("spawn")
-    result_queue = ctx.Queue(maxsize=1)
-    proc = ctx.Process(target=_execute_in_subprocess, args=(code_string, df, result_queue))
-    proc.start()
-    proc.join(timeout_seconds)
+    """Run analysis code in a thread and force-stop on timeout.
 
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(2)
+    Uses threading instead of multiprocessing to avoid the heavy cost of
+    spawning a new Python process and pickling the DataFrame on every call.
+    """
+    result_holder = {}
+
+    def _target():
+        safe_builtins = _make_safe_builtins()
+        exec_globals = {
+            "__builtins__": safe_builtins,
+            "pd": pd,
+            "pandas": pd,
+            "np": np,
+            "numpy": np,
+            "json": json,
+            "df": df.copy(),
+            "result": None,
+        }
+
+        exec_globals["df"].columns = [
+            re.sub(r"\s+", " ", str(col)).strip() for col in exec_globals["df"].columns
+        ]
+
+        try:
+            compiled = compile(code_string, "<llm_code>", "exec")
+            exec(compiled, exec_globals)
+            result_holder["ok"] = True
+            result_holder["result"] = exec_globals.get("result")
+        except Exception as exc:
+            tb = traceback.format_exc()
+            result_holder["ok"] = False
+            result_holder["error"] = str(exc)
+            result_holder["traceback"] = tb
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+
+    if thread.is_alive():
         raise TimeoutError(
             f"Code execution timed out (exceeded {timeout_seconds} seconds). Try a simpler analysis."
         )
 
-    try:
-        payload = result_queue.get_nowait()
-    except queue.Empty:
-        raise RuntimeError("Code process ended without returning a result.")
+    if not result_holder:
+        raise RuntimeError("Code execution ended without returning a result.")
 
-    if not payload.get("ok"):
-        err = payload.get("error", "Unknown execution error")
-        tb = payload.get("traceback", "")
+    if not result_holder.get("ok"):
+        err = result_holder.get("error", "Unknown execution error")
+        tb = result_holder.get("traceback", "")
         tb_lines = tb.strip().split("\n") if tb else []
         short_tb = "\n".join(tb_lines[-3:])
         raise RuntimeError(f"Code execution error: {err}\n{short_tb}")
 
-    return payload.get("result")
+    return result_holder.get("result")
 
 
 def execute_analysis_code(code_string, df):

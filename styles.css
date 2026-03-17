@@ -109,7 +109,7 @@ body {
     border-radius: 50%;
     filter: blur(80px);
     opacity: 0.4;
-    animation: floatBlob 25s infinite alternate cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
 }
 
 .blob-1 {
@@ -128,7 +128,6 @@ body {
     height: 50vw;
     background: radial-gradient(circle, rgba(234, 67, 53, 0.15) 0%, rgba(234, 67, 53, 0) 70%);
     /* Red */
-    animation-delay: -12s;
 }
 
 .blob-3 {
@@ -138,26 +137,7 @@ body {
     height: 40vw;
     background: radial-gradient(circle, rgba(251, 188, 5, 0.1) 0%, rgba(251, 188, 5, 0) 70%);
     /* Yellow */
-    animation-duration: 40s;
     opacity: 0.3;
-}
-
-@keyframes floatBlob {
-    0% {
-        transform: translate(0, 0) scale(1);
-    }
-
-    33% {
-        transform: translate(30px, -50px) scale(1.1);
-    }
-
-    66% {
-        transform: translate(-20px, 20px) scale(0.9);
-    }
-
-    100% {
-        transform: translate(0, 0) scale(1);
-    }
 }
 
 .container {
@@ -556,7 +536,7 @@ main {
 .data-preview-toggle {
     font-family: var(--font-family);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.2s;
 }
 
 /* Chat Hero UI */
@@ -591,12 +571,10 @@ main {
     position: relative;
     border-radius: 16px;
     background: var(--surface-secondary);
-    backdrop-filter: blur(20px);
     box-shadow: 0 4px 20px var(--shadow-color);
-    /* Soft shadow */
     border: 1px solid var(--border-color);
     padding: 10px;
-    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    transition: box-shadow 0.3s, border-color 0.3s, background 0.3s, transform 0.3s;
 }
 
 .chat-input-wrapper:hover,
@@ -642,7 +620,7 @@ main {
     padding: 8px;
     border-radius: 50%;
     color: var(--text-light);
-    transition: all 0.2s;
+    transition: background 0.2s, color 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -687,7 +665,7 @@ main {
     font-size: 0.9rem;
     color: var(--text-light);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
 
 .suggestion-chip:hover {
