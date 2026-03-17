@@ -28,7 +28,6 @@ body {
 .sidebar {
     width: 260px;
     background: var(--surface-secondary);
-    backdrop-filter: blur(20px);
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
@@ -134,7 +133,6 @@ body {
     height: 56px;
     border-bottom: 1px solid var(--border-color);
     background: var(--surface-secondary);
-    backdrop-filter: blur(12px);
     display: flex;
     align-items: center;
     padding: 0 28px;

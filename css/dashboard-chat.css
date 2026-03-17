@@ -42,6 +42,8 @@
     overflow-y: auto;
     padding: 20px 30px 120px 30px; /* added 120px bottom padding to prevent hiding behind floating input */
     display: none;
+    contain: content;
+    will-change: scroll-position;
 }
 
 .chat-messages.has-messages {
@@ -52,6 +54,7 @@
 .chat-msg {
     margin-bottom: 24px;
     animation: fadeInUp 0.3s ease;
+    contain: layout style paint;
 }
 
 @keyframes fadeInUp {
@@ -136,11 +139,10 @@
     border-radius: 12px;
     padding: 16px;
     box-shadow: 0 2px 8px var(--shadow-color);
-    transition: box-shadow 0.2s;
 }
 
 .chat-chart-container:hover {
-    box-shadow: 0 4px 16px var(--shadow-color);
+    box-shadow: 0 2px 8px var(--shadow-color);
 }
 
 .chart-actions {
@@ -232,7 +234,6 @@
 .chat-input-bar {
     padding: 16px 30px;
     background: var(--surface-secondary);
-    backdrop-filter: blur(10px);
     border-top: 1px solid var(--border-color);
 }
 
@@ -241,11 +242,10 @@
     align-items: flex-end;
     gap: 10px;
     background: var(--surface-secondary);
-    backdrop-filter: blur(12px);
     border: 1px solid var(--border-color);
     border-radius: 12px;
     padding: 8px 12px;
-    transition: all 0.3s;
+    transition: background 0.3s, border-color 0.3s, transform 0.3s, box-shadow 0.3s;
     max-width: 860px;
     width: calc(100% - 60px);
     margin: 0 auto;
@@ -286,7 +286,7 @@
     cursor: pointer;
     padding: 6px;
     border-radius: 6px;
-    transition: all 0.2s;
+    transition: background 0.2s, color 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -308,7 +308,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
+    transition: background 0.2s, transform 0.2s;
     flex-shrink: 0;
 }
 
@@ -340,7 +340,7 @@
     font-size: 0.88rem;
     color: var(--text-light);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
     font-family: var(--font-family);
 }
 
