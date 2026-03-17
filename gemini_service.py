@@ -12,6 +12,7 @@ import logging
 import re
 from google import genai
 from dotenv import load_dotenv
+from errors import LLMServiceError
 
 load_dotenv()
 
@@ -165,12 +166,7 @@ def analyse_data(question, data_context, chat_history=None):
         result["usage"] = usage_dict
         return result
     except Exception as e:
-        return {
-            "error": True,
-            "text": f"Sorry, I encountered an error while analysing your data: {str(e)}",
-            "chart": None,
-            "usage": None
-        }
+        raise LLMServiceError(f"Sorry, I encountered an error while analysing your data: {str(e)}")
 
 
 # ==============================================================
@@ -221,7 +217,7 @@ def _call_llm_for_code(full_prompt):
         return code, usage_dict
     except Exception as e:
         logger.error("Code generation error: %s", e)
-        raise RuntimeError(f"Failed to generate code: {e}")
+        raise LLMServiceError(f"Failed to generate code: {e}")
 
 
 def generate_data_extraction_code(question, schema_context):
@@ -381,7 +377,7 @@ Return ONLY the explanation text, no JSON, no code fences."""
         }
     except Exception as e:
         logger.error("Interpretation error: %s", e)
-        raise RuntimeError(f"Failed to interpret results: {e}")
+        raise LLMServiceError(f"Failed to interpret results: {e}")
 
 
 def _parse_response(response_text):

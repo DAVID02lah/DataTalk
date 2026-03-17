@@ -50,9 +50,15 @@ CHAT_HISTORY_CAP = get_int_env("CHAT_HISTORY_CAP", 5)
 QUERY_CACHE_SIZE = get_int_env("QUERY_CACHE_SIZE", 300)
 EXEC_TIMEOUT = get_int_env("EXEC_TIMEOUT", 60)
 
+# Rate Limiting
+RATE_LIMIT = os.getenv("RATE_LIMIT", "5 per minute")
+
 # Pagination
 DEFAULT_PAGE_SIZE = get_int_env("DEFAULT_PAGE_SIZE", 50)
 MAX_PAGE_SIZE = get_int_env("MAX_PAGE_SIZE", 200)
+
+# Sessions
+SESSION_TTL_SECONDS = get_int_env("SESSION_TTL_SECONDS", 86400)
 
 # Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")

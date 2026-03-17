@@ -22,6 +22,8 @@ import logging
 from flask import Flask, request, jsonify, send_from_directory, g, Response, stream_with_context
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 import app_config
 from app_state import SessionManager
@@ -30,6 +32,7 @@ import gemini_service
 import code_executor
 import auth_service
 from auth_service import require_auth
+from errors import DataTalkError, DatasetNotFoundError, ValidationError, LLMServiceError, CodeExecutionError
 
 
 # ==============================================================
@@ -50,6 +53,17 @@ logging.basicConfig(
 )
 
 session_mgr = SessionManager()
+
+def _get_user_id_or_ip():
+    """Return user_id if authenticated, else IP address for rate limiting."""
+    return getattr(g, "user_id", get_remote_address())
+
+limiter = Limiter(
+    key_func=_get_user_id_or_ip,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://"
+)
 
 ALLOWED_STATIC_FILES = {
     "index.html",
@@ -179,14 +193,6 @@ def _sse_event(event, data):
     """Format a single SSE event string."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
-
-_ERROR_TYPE_TO_HTTP_STATUS = {
-    "file_not_found": 404,
-    "gemini_error": 502,
-    "analysis_error": 500,
-}
-
-
 # ==============================================================
 # Core: Analysis Pipeline
 # ==============================================================
@@ -274,9 +280,8 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
                 yield ("phase", {"phase": "executing", "message": f"Running analysis ({attempt_label})..."})
                 _log_event("code_exec_started", attempt=attempt_label, chars=len(code_to_run))
 
-                exec_result = code_executor.execute_analysis_code(code_to_run, df)
-
-                if not exec_result.get("error"):
+                try:
+                    exec_result = code_executor.execute_analysis_code(code_to_run, df)
                     result = exec_result
                     result["mode"] = "code_execution"
                     _log_event("code_exec_succeeded", attempt=attempt_label)
@@ -294,21 +299,25 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
                     else:
                         _log_event("interpret_failed")
                     break
-                else:
-                    error_msg = exec_result.get("text", "Unknown error")
+                except CodeExecutionError as e:
+                    error_msg = str(e)
                     _log_event("code_exec_failed", error=error_msg)
 
                     if attempt < MAX_RETRIES:
                         yield ("phase", {"phase": "retrying", "message": f"Fixing code (attempt {attempt + 1})..."})
                         _log_event("retry_started", attempt=attempt + 1, max_retries=MAX_RETRIES)
-                        last_code, usage = gemini_service.retry_analysis_code(
-                            message, schema_context_full, code_to_run, error_msg,
-                            profile_context, extracted_data_context
-                        )
-                        _log_token_usage(usage, "Retry")
-                        if last_code:
-                            _log_event("retry_code_generated", chars=len(last_code))
-                        else:
+                        try:
+                            last_code, usage = gemini_service.retry_analysis_code(
+                                message, schema_context_full, code_to_run, error_msg,
+                                profile_context, extracted_data_context
+                            )
+                            _log_token_usage(usage, "Retry")
+                            if last_code:
+                                _log_event("retry_code_generated", chars=len(last_code))
+                            else:
+                                _log_event("retry_failed")
+                                break
+                        except LLMServiceError:
                             _log_event("retry_failed")
                             break
                     else:
@@ -349,23 +358,35 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
 
         yield ("result", result)
 
-    except FileNotFoundError:
+    except DataTalkError as e:
         yield ("error", {
             "error": True,
-            "text": f"File '{filename}' not found. Please upload it again.",
-            "error_type": "file_not_found",
+            "text": e.message,
+            "error_type": e.error_type,
+            "status_code": e.status_code
         })
     except Exception as e:
         yield ("error", {
             "error": True,
             "text": f"Error analysing data: {str(e)}",
             "error_type": "analysis_error",
+            "status_code": 500
         })
 
 
 # ==============================================================
 # Routes: Static File Serving
 # ==============================================================
+
+@app.errorhandler(DataTalkError)
+def handle_data_talk_error(e):
+    """Global error handler for DataTalkError exceptions."""
+    return _error_response(e.message, status_code=e.status_code, error_type=e.error_type)
+
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    """Global error handler for rate limit exceptions."""
+    return _error_response(f"Rate limit exceeded: {e.description}", status_code=429, error_type="rate_limit_exceeded")
 
 @app.route("/")
 def serve_index():
@@ -402,20 +423,18 @@ def api_signup():
     """Register a new user."""
     data = request.get_json()
     if not data:
-        return jsonify({"error": "No data provided"}), 400
+        raise ValidationError("No data provided")
 
     email = data.get("email", "").strip()
     password = data.get("password", "")
     display_name = data.get("display_name", "").strip()
 
     if not email or not password:
-        return jsonify({"error": "Email and password are required"}), 400
+        raise ValidationError("Email and password are required")
     if len(password) < 6:
-        return jsonify({"error": "Password must be at least 6 characters"}), 400
+        raise ValidationError("Password must be at least 6 characters")
 
     result = auth_service.signup(email, password, display_name)
-    if result.get("error"):
-        return jsonify(result), 400
     return jsonify(result)
 
 
@@ -424,17 +443,15 @@ def api_login():
     """Authenticate a user and return tokens."""
     data = request.get_json()
     if not data:
-        return jsonify({"error": "No data provided"}), 400
+        raise ValidationError("No data provided")
 
     email = data.get("email", "").strip()
     password = data.get("password", "")
 
     if not email or not password:
-        return jsonify({"error": "Email and password are required"}), 400
+        raise ValidationError("Email and password are required")
 
     result = auth_service.login(email, password)
-    if result.get("error"):
-        return jsonify(result), 401
 
     user_id = result["user"]["id"]
     _load_chat_history_for_user(user_id)
@@ -449,6 +466,7 @@ def api_logout():
     """Sign out the current user."""
     token = request.headers.get("Authorization", "")[7:]
     auth_service.logout(token)
+    session_mgr.remove_state(g.user_id)
     _log_event("user_logout", user_id=g.user_id)
     return jsonify({"success": True})
 
@@ -489,36 +507,32 @@ def api_session():
 def upload_file():
     """Upload a CSV/Excel file. Returns filename, column info, row count, preview data."""
     if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
+        raise ValidationError("No file provided")
 
     file = request.files["file"]
     if file.filename == "":
-        return jsonify({"error": "No file selected"}), 400
+        raise ValidationError("No file selected")
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in (".csv", ".xlsx", ".xls"):
-        return jsonify({"error": f"Unsupported file type: {ext}. Use CSV or Excel."}), 400
+        raise ValidationError(f"Unsupported file type: {ext}. Use CSV or Excel.")
 
-    try:
-        filename, _ = data_service.save_uploaded_file(file, user_id=g.user_id)
+    filename, _ = data_service.save_uploaded_file(file, user_id=g.user_id)
 
-        state = _get_user_state()
-        df = _get_dataframe(filename, user_id=g.user_id, state=state)
-        summary = data_service.get_summary(df)
-        state.active_file["filename"] = filename
+    state = _get_user_state()
+    df = _get_dataframe(filename, user_id=g.user_id, state=state)
+    summary = data_service.get_summary(df)
+    state.active_file["filename"] = filename
 
-        state.chat_histories.clear()
-        state.query_cache.clear()
-        state.clear_file_cache()
-        state.set_cached(filename, "df", df)
+    state.chat_histories.clear()
+    state.query_cache.clear()
+    state.clear_file_cache()
+    state.set_cached(filename, "df", df)
 
-        _log_event("file_uploaded", user_id=g.user_id, filename=filename,
-                    rows=summary["shape"]["rows"], cols=summary["shape"]["columns"])
+    _log_event("file_uploaded", user_id=g.user_id, filename=filename,
+                rows=summary["shape"]["rows"], cols=summary["shape"]["columns"])
 
-        return jsonify({"success": True, "filename": filename, "summary": summary})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"success": True, "filename": filename, "summary": summary})
 
 
 @app.route("/api/files", methods=["GET"])
@@ -546,34 +560,25 @@ def list_files():
 @require_auth
 def data_summary(filename):
     """Get summary stats for a specific uploaded file."""
-    try:
-        state = _get_user_state()
-        df = _get_dataframe(filename, user_id=g.user_id, state=state)
-        summary = data_service.get_summary(df)
-        return jsonify({"filename": filename, "summary": summary})
-    except FileNotFoundError:
-        return jsonify({"error": f"File not found: {filename}"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    state = _get_user_state()
+    df = _get_dataframe(filename, user_id=g.user_id, state=state)
+    summary = data_service.get_summary(df)
+    return jsonify({"filename": filename, "summary": summary})
 
 
 @app.route("/api/data/<filename>", methods=["GET"])
 @require_auth
 def get_full_data(filename):
     """Get the full dataset for the data connector."""
-    try:
-        state = _get_user_state()
-        df = _get_dataframe(filename, user_id=g.user_id, state=state)
-        data = [df.columns.tolist()] + df.fillna("").values.tolist()
-        return jsonify({"filename": filename, "data": data})
-    except FileNotFoundError:
-        return jsonify({"error": f"File not found: {filename}"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    state = _get_user_state()
+    df = _get_dataframe(filename, user_id=g.user_id, state=state)
+    data = [df.columns.tolist()] + df.fillna("").values.tolist()
+    return jsonify({"filename": filename, "data": data})
 
 
 @app.route("/api/suggest-questions", methods=["GET"])
 @require_auth
+@limiter.limit(app_config.RATE_LIMIT)
 def suggest_questions():
     """Ask Gemini to suggest 4 smart questions based on the active dataset."""
     state = _get_user_state()
@@ -653,6 +658,7 @@ def _parse_chat_request():
 
 @app.route("/api/chat", methods=["POST"])
 @require_auth
+@limiter.limit(app_config.RATE_LIMIT)
 def chat():
     """
     Non-streaming chat endpoint.
@@ -668,7 +674,7 @@ def chat():
         if event_type == "result":
             return jsonify(payload)
         if event_type == "error":
-            status = _ERROR_TYPE_TO_HTTP_STATUS.get(payload.get("error_type"), 500)
+            status = payload.get("status_code", 500)
             return _error_response(payload["text"], status_code=status, error_type=payload.get("error_type", "server_error"))
 
     # Defensive guard — pipeline always yields a result or error, so this is unreachable
@@ -677,6 +683,7 @@ def chat():
 
 @app.route("/api/chat/stream", methods=["POST"])
 @require_auth
+@limiter.limit(app_config.RATE_LIMIT)
 def chat_stream():
     """
     SSE streaming chat endpoint. Yields real-time phase updates.
@@ -770,7 +777,7 @@ def save_dashboard():
     """Save dashboard configuration to Supabase."""
     data = request.get_json()
     if not data:
-        return jsonify({"error": "No data provided"}), 400
+        raise ValidationError("No data provided")
 
     try:
         sb_service = auth_service.get_supabase_service()
@@ -782,7 +789,7 @@ def save_dashboard():
         return jsonify({"success": True})
     except Exception as e:
         logger.error("Dashboard save failed to Supabase: %s", e)
-        return jsonify({"error": str(e)}), 500
+        raise DataTalkError(str(e))
 
 
 @app.route("/api/dashboard/pin", methods=["POST"])

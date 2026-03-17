@@ -8,6 +8,7 @@ Thread-safe via threading.Lock.
 
 import collections
 import threading
+import time
 
 import app_config
 
@@ -75,15 +76,28 @@ class SessionManager:
     """
 
     def __init__(self):
-        self._sessions: dict[str, UserState] = {}
+        self._sessions: dict[str, tuple[UserState, float]] = {}
         self._lock = threading.Lock()
+
+    def _evict_expired(self, now: float):
+        """Evict expired sessions. Assumes lock is held."""
+        expired = [
+            uid for uid, (_, last_accessed) in self._sessions.items()
+            if now - last_accessed > app_config.SESSION_TTL_SECONDS
+        ]
+        for uid in expired:
+            self._sessions.pop(uid, None)
 
     def get_state(self, user_id: str) -> UserState:
         """Get or create state for a user. Thread-safe."""
+        now = time.time()
         with self._lock:
+            self._evict_expired(now)
             if user_id not in self._sessions:
-                self._sessions[user_id] = UserState()
-            return self._sessions[user_id]
+                self._sessions[user_id] = (UserState(), now)
+            else:
+                self._sessions[user_id] = (self._sessions[user_id][0], now)
+            return self._sessions[user_id][0]
 
     def remove_state(self, user_id: str):
         """Remove a user's state (e.g., on logout)."""
