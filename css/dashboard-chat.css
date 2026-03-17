@@ -105,10 +105,12 @@
     font-size: 0.95rem;
     line-height: 1.65;
     color: var(--text-color);
+    text-align: justify;
 }
 
 .chat-msg-body p {
     margin-bottom: 8px;
+    text-align: justify;
 }
 
 .chat-msg-body strong {

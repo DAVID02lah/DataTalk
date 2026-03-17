@@ -1,5 +1,5 @@
 ---
-name: Data Talk Project
+name: DATA TALK
 description: Comprehensive guide for understanding and contributing to the Data Talk AI-powered data analysis web application.
 ---
 

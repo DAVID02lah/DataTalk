@@ -92,7 +92,6 @@ flowchart TD
         C2 --> C2B["_parse_chat_request()<br>Validate & extract params"]
         C2B --> C3{Cache Hit?<br>per-user LRU cache}
         C3 -->|Yes| C12[Return Cached Result<br>with cached badge]
-
         C3 -->|No| C4["Phase 0.5: Data Extraction<br>gemini_service.generate_data_extraction_code()<br>→ SSE: event=phase"]
         C4 --> C5["code_executor.execute_extraction_code()<br>Extract unique values from categorical columns"]
 
