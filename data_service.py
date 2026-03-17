@@ -9,6 +9,7 @@ import warnings
 import pandas as pd
 from werkzeug.utils import secure_filename
 import auth_service
+from errors import DatasetNotFoundError, ValidationError, DataProcessingError
 
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 
@@ -26,11 +27,11 @@ def save_uploaded_file(file_storage, user_id=None):
     raw_filename = file_storage.filename or ""
     filename = secure_filename(raw_filename)
     if not filename:
-        raise ValueError("Invalid file name.")
+        raise ValidationError("Invalid file name.")
 
     ext = os.path.splitext(filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
-        raise ValueError(f"Unsupported file type: {ext}")
+        raise ValidationError(f"Unsupported file type: {ext}")
 
     bucket = get_dataset_bucket()
     
@@ -69,11 +70,13 @@ def load_file(filename, user_id=None):
         elif ext in (".xlsx", ".xls"):
             df = pd.read_excel(buffer, engine="openpyxl")
         else:
-            raise ValueError(f"Unsupported file type: {ext}")
+            raise ValidationError(f"Unsupported file type: {ext}")
         
         return df
     except Exception as e:
-        raise FileNotFoundError(f"Failed to load file '{filename}' from storage: {e}")
+        if isinstance(e, ValidationError):
+            raise
+        raise DatasetNotFoundError(f"Failed to load file '{filename}' from storage: {e}")
 
 
 def get_summary(df):

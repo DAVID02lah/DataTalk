@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 import app_config
+from errors import CodeExecutionError
 
 EXEC_TIMEOUT = app_config.EXEC_TIMEOUT
 MAX_CODE_LENGTH = 10000
@@ -199,7 +200,7 @@ def execute_analysis_code(code_string, df):
     code_string = _clean_code(code_string)
 
     if len(code_string) > MAX_CODE_LENGTH:
-        return _error_result(
+        raise CodeExecutionError(
             "The generated code is too large (over 10,000 characters). "
             "This usually means the AI tried to hardcode the dataset instead of analysing it. "
             "Falling back to text-based analysis."
@@ -210,12 +211,12 @@ def execute_analysis_code(code_string, df):
         result = _run_with_timeout(code_string, df, EXEC_TIMEOUT)
 
         if result is None:
-            return _error_result(
+            raise CodeExecutionError(
                 "The generated code did not produce a 'result' variable. "
                 "Falling back to text-based analysis."
             )
         if not isinstance(result, dict):
-            return _error_result(
+            raise CodeExecutionError(
                 "The generated code produced a 'result' that is not a dict. "
                 "Falling back to text-based analysis."
             )
@@ -230,44 +231,33 @@ def execute_analysis_code(code_string, df):
         return normalized
 
     except SyntaxError as exc:
-        return _error_result(f"Syntax error in generated code: {exc}")
+        raise CodeExecutionError(f"Syntax error in generated code: {exc}")
     except PermissionError as exc:
-        return _error_result(f"Security violation: {exc}")
+        raise CodeExecutionError(f"Security violation: {exc}")
     except TimeoutError as exc:
-        return _error_result(str(exc))
+        raise CodeExecutionError(str(exc))
     except Exception as exc:
-        return _error_result(str(exc))
+        raise CodeExecutionError(str(exc))
 
 
 def execute_extraction_code(code_string, df):
     """Execute extraction code expected to place a dictionary in `result`."""
     code_string = _clean_code(code_string)
     if len(code_string) > MAX_CODE_LENGTH:
-        return {"error": True, "text": "Extraction code is too large."}
+        raise CodeExecutionError("Extraction code is too large.")
 
     try:
         _validate_generated_code(code_string)
         result = _run_with_timeout(code_string, df, EXEC_TIMEOUT)
         if result is None or not isinstance(result, dict):
-            return {"error": True, "text": "Extraction code did not produce a result dict."}
+            raise CodeExecutionError("Extraction code did not produce a result dict.")
         return _deep_convert(result)
     except TimeoutError:
-        return {"error": True, "text": "Extraction code timed out."}
+        raise CodeExecutionError("Extraction code timed out.")
     except PermissionError as exc:
-        return {"error": True, "text": f"Security violation: {exc}"}
+        raise CodeExecutionError(f"Security violation: {exc}")
     except Exception as exc:
-        return {"error": True, "text": f"Extraction error: {exc}"}
-
-
-def _error_result(message):
-    return {
-        "error": True,
-        "text": message,
-        "chart": None,
-        "table": None,
-        "stats": None,
-        "followup": [],
-    }
+        raise CodeExecutionError(f"Extraction error: {exc}")
 
 
 def _normalize_table(table):

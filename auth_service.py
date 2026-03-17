@@ -5,18 +5,19 @@ Handles user signup, login, JWT verification, and provides
 a Flask decorator for protecting API routes.
 """
 
-import os
 import logging
 import functools
 from flask import request, jsonify, g
 from supabase import create_client, Client
+import app_config
+from errors import AuthenticationError, ValidationError
 
 logger = logging.getLogger("data_talk.auth")
 
 # --- Supabase Client ---
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_URL = app_config.SUPABASE_URL
+SUPABASE_ANON_KEY = app_config.SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY = app_config.SUPABASE_SERVICE_ROLE_KEY
 
 _supabase: Client | None = None
 _supabase_service: Client | None = None
@@ -61,7 +62,7 @@ def signup(email: str, password: str, display_name: str = "") -> dict:
         user = result.user
         session = result.session
         if not user:
-            return {"error": "Signup failed — no user returned."}
+            raise AuthenticationError("Signup failed — no user returned.")
         return {
             "success": True,
             "user": {
@@ -75,7 +76,9 @@ def signup(email: str, password: str, display_name: str = "") -> dict:
     except Exception as e:
         error_msg = str(e)
         logger.error("Signup error: %s", error_msg)
-        return {"error": error_msg}
+        if isinstance(e, AuthenticationError):
+            raise
+        raise AuthenticationError(error_msg)
 
 
 def login(email: str, password: str) -> dict:
@@ -89,7 +92,7 @@ def login(email: str, password: str) -> dict:
         user = result.user
         session = result.session
         if not user or not session:
-            return {"error": "Invalid email or password."}
+            raise AuthenticationError("Invalid email or password.")
 
         # Fetch profile for display name using service client
         display_name = email.split("@")[0]
@@ -114,7 +117,9 @@ def login(email: str, password: str) -> dict:
     except Exception as e:
         error_msg = str(e)
         logger.error("Login error: %s", error_msg)
-        return {"error": error_msg}
+        if isinstance(e, AuthenticationError):
+            raise
+        raise AuthenticationError(error_msg)
 
 
 def verify_token(access_token: str) -> dict | None:
@@ -177,12 +182,12 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            return jsonify({"error": "Missing or invalid Authorization header"}), 401
+            raise AuthenticationError("Missing or invalid Authorization header")
 
         token = auth_header[7:]  # Strip "Bearer "
         user_info = verify_token(token)
         if not user_info:
-            return jsonify({"error": "Invalid or expired token"}), 401
+            raise AuthenticationError("Invalid or expired token")
 
         g.user_id = user_info["id"]
         g.user_email = user_info["email"]

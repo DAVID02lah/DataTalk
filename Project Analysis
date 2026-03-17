@@ -259,14 +259,12 @@ graph TD
 | # | Area | Details | Location |
 |---|------|---------|----------|
 | 1 | **Thread-Unsafe Logout** | `logout()` mutates the shared Supabase singleton client's internal `_headers` attribute to inject user tokens before calling `sign_out()`. If two users log out simultaneously, headers can be interleaved. | `auth_service.py` lines 160-163 |
-| 2 | **No Session Eviction** | `SessionManager._sessions` grows unboundedly as new users authenticate. No TTL or eviction policy. `remove_state()` exists but is never called (not invoked on logout). Long-running servers will leak memory. | `app_state.py` |
-| 3 | **No Full Data Pagination** | `get_full_data()` loads the entire dataset into memory and sends it as JSON. No pagination. Large files will cause memory and bandwidth issues. (`/api/files` and `/api/chat/history` are now paginated — this only affects `/api/data/<filename>`.) | `server.py` lines 546-558 |
+| 2 | **No Full Data Pagination** | `get_full_data()` loads the entire dataset into memory and sends it as JSON. No pagination. Large files will cause memory and bandwidth issues. (`/api/files` and `/api/chat/history` are now paginated — this only affects `/api/data/<filename>`.) | `server.py` lines 546-558 |
 
 ### 7.2 Security Concerns
 
 | # | Area | Details | Location |
 |---|------|---------|----------|
-| 1 | **No Rate Limiting** | Chat, suggestion, and upload endpoints trigger expensive LLM calls. No throttling means easy API abuse/DoS. | `server.py` |
 | 2 | **Zero SRI Hashes on All 6 CDN Resources** | Handsontable, SheetJS, Plotly.js, Marked.js, and DOMPurify all loaded without `integrity` or `crossorigin` attributes. A compromised CDN could inject arbitrary JavaScript with full access to auth tokens and data. | `dashboard.html` lines 15-23, 257 |
 | 3 | **Unpinned CDN Versions** | SheetJS uses `xlsx-latest`, Handsontable and Marked.js use unpinned `npm/...` URLs. Supply-chain attack risk — malicious code could be injected via a version update with no safeguard. | `dashboard.html` |
 | 4 | **localStorage Token Storage** | `dt_access_token`, `dt_refresh_token`, and `dt_user` stored in `localStorage`, accessible to any JS on the page including scripts from compromised CDNs. `httpOnly` cookies would be more secure. | `login.html` lines 349-351 |
@@ -274,7 +272,6 @@ graph TD
 | 6 | **Sandbox Escape Residual Risk** | While AST validation blocks known dangerous patterns, `type()`, `vars()`, `dir()`, and `hasattr()` remain in safe builtins. No memory or CPU limits on subprocess — malicious code could consume excessive resources. | `code_executor.py` |
 | 7 | **No Token Refresh Endpoint** | The server returns `refresh_token` on login, but no endpoint exists to refresh an expired access token. Users must re-authenticate when tokens expire. | `auth_service.py` |
 | 8 | **Token Verified via Network on Every Request** | `verify_token()` calls Supabase `getUser()` API on every authenticated request. No local JWT validation or caching. Adds latency and creates a dependency on Supabase availability. | `auth_service.py` line 130 |
-| 9 | ~~**Duplicate Supabase Config**~~ | **RESOLVED** — Removed dead Supabase constants from `app_config.py`. `auth_service.py` is the single source of truth for Supabase credentials. Redundant `load_dotenv()` calls also removed from `auth_service.py` and `gemini_service.py` (kept only in `server.py`). | `app_config.py`, `auth_service.py` |
 
 ### 7.3 Performance Issues
 
@@ -291,8 +288,7 @@ graph TD
 | # | Area | Details | Location |
 |---|------|---------|----------|
 | 1 | **Zero Test Coverage** | No unit tests, integration tests, or end-to-end tests for any component. The sandbox, data parsing, API endpoints, and auth are all untested. `.gitignore` includes `.pytest_cache/` but no tests exist. | Entire project |
-| 2 | **Inconsistent Error Handling** | `server.py` returns structured JSON errors via `_error_response()`. `gemini_service.py` mixes return-error-dicts with raising `RuntimeError`. `code_executor.py` returns error dicts. `data_service.py` raises exceptions. No unified pattern. | All backend files |
-| 3 | **No Module System (Frontend)** | All frontend functions are globals on `window` scope (~45+ functions). No ES modules, no bundler. Load order dependencies between files (e.g., `core.js` must load before `data-chat.js`). | All JS files |
+| 2 | **No Module System (Frontend)** | All frontend functions are globals on `window` scope (~45+ functions). No ES modules, no bundler. Load order dependencies between files (e.g., `core.js` must load before `data-chat.js`). | All JS files |
 | 4 | **No JSDoc / Minimal Docstrings** | Frontend functions have no documentation. Backend has minimal docstrings. Unclear parameter expectations across service boundaries. | All files |
 | 5 | **Legacy `script.js` Still Exists** | `script.js` (16 lines) is a legacy module loader. No HTML file references it. Should be deleted. | `script.js` |
 | 6 | **Duplicate CSS: Suggestion Chips** | `.suggestion-chip` / `.suggestions-row` defined in both `styles.css` (landing page) and `dashboard-chat.css` (dashboard). Minor inconsistencies in font-size (0.9rem vs 0.88rem). | CSS files |
@@ -316,11 +312,9 @@ graph TD
 
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
-| 1 | **Add rate limiting** — Use `Flask-Limiter` on `/api/chat`, `/api/chat/stream`, and `/api/suggest-questions` (e.g., 10 requests/minute per user). | Security | Low |
 | 2 | **Add SRI hashes + pin CDN versions** — Generate integrity hashes for all 6 external libraries. Pin SheetJS, Handsontable, and Marked.js to specific versions. | Security | Low |
 | 3 | **Fix thread-unsafe logout** — Use a per-request Supabase client instance in `logout()` instead of mutating the shared singleton's headers. | Stability | Low |
-| 4 | **Add session eviction** — Implement TTL-based eviction on `SessionManager._sessions`. Call `remove_state()` on logout. | Memory | Low |
-| 5 | **Add token refresh endpoint** — Server-side `/api/auth/refresh` endpoint that accepts a refresh token and returns a new access token. | Auth | Low |
+| 4 | **Add token refresh endpoint** — Server-side `/api/auth/refresh` endpoint that accepts a refresh token and returns a new access token. | Auth | Low |
 | 6 | **Delete dead `script.js`** — Remove the legacy module loader that is no longer referenced. | Cleanup | Trivial |
 
 ### Phase 2: Quality & Reliability
@@ -328,9 +322,7 @@ graph TD
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
 | 7 | **Add test suite** — `pytest` tests for: `code_executor` (sandbox escapes), `data_service` (parsing edge cases), `server.py` (API contract tests), `auth_service` (JWT verification), and `gemini_service` (mock LLM responses). | Quality | High |
-| 8 | **Unify error handling** — Define a consistent error response pattern across all services. Use custom exception classes that map to HTTP status codes. | Quality | Medium |
-| 9 | **Add local JWT validation** — Verify JWT signatures locally using Supabase's public key instead of calling `getUser()` on every request. Cache the result with a short TTL. | Performance | Medium |
-| 10 | **Consolidate Supabase config** — All modules should read Supabase credentials from `app_config.py` only. Remove duplicate `os.getenv()` calls in `auth_service.py`. | Maintainability | Low |
+| 8 | **Add local JWT validation** — Verify JWT signatures locally using Supabase's public key instead of calling `getUser()` on every request. Cache the result with a short TTL. | Performance | Medium |
 | 11 | **Move localStorage tokens to httpOnly cookies** — Prevents XSS-based token theft. Requires server-side cookie management. | Security | Medium |
 | 12 | **Error toasts** — Replace `alert()` calls with branded toast notifications. Show user-facing error messages on network failures. | UX | Medium |
 
@@ -364,7 +356,7 @@ graph TD
 
 | File | Lines | Role | Health |
 |------|-------|------|--------|
-| `server.py` | 927 | Flask REST API + SSE router, shared analysis pipeline generator, auth middleware, pagination helper, static file serving | 🟢 Pipeline deduplicated; files + history paginated; no rate limiting; `/api/data` still unpaginated |
+| `server.py` | 927 | Flask REST API + SSE router, shared analysis pipeline generator, auth middleware, pagination helper, static file serving | 🟢 Pipeline deduplicated; files + history paginated; rate limiting added; `/api/data` still unpaginated |
 | `gemini_service.py` | 434 | LLM prompt construction, code generation, interpretation, extraction, response parsing | 🟢 Solid; consistent logging via `logging` module |
 | `data_service.py` | 453 | Supabase Storage file management, DataFrame summarization, schema generation, data profiling | 🟢 Good; O(n^2) correlations for large column counts |
 | `code_executor.py` | 316 | Sandboxed execution with AST validation, subprocess isolation, result normalization | 🟢 Strong security model; subprocess overhead; no memory limits |
@@ -452,6 +444,9 @@ graph TD
 
 | Previous Issue | Resolution |
 |----------------|------------|
+| **No Rate Limiting** (Security #1) | Resolved. Implemented `Flask-Limiter` using a memory storage URI and applied rate limits (default: 5 per minute per user) to `/api/chat`, `/api/chat/stream`, and `/api/suggest-questions`. Configured custom 429 error handler. |
+| **Duplicate Supabase Config** (Security #9) | Resolved. Removed duplicate `os.getenv()` calls in `auth_service.py` and imported `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` directly from `app_config.py`. |
+| **Inconsistent Error Handling** (Quality #2) | Resolved. Created custom exception classes in `errors.py` mapped to HTTP status codes. Unified error handling across all backend services (`server.py`, `gemini_service.py`, `code_executor.py`, `data_service.py`) using try-except blocks instead of inconsistent dictionary returns. |
 | **Massive Chat Pipeline Duplication** (Critical #1) | Resolved. `_run_analysis_pipeline()` shared generator function. Both `chat()` and `chat_stream()` consume the same generator. |
 | **No DataFrame Caching** (Critical #3) | Resolved. `UserState` caches DataFrames, schema contexts (lean + full), and data profiles per file. Invalidated on new upload. |
 | **Inconsistent Logging** (Quality #3) | Resolved. `gemini_service.py` now uses `logging.getLogger("data_talk.gemini")` instead of `print()`. All backend services use structured logging. |
@@ -460,6 +455,7 @@ graph TD
 | **Duplicate CSS: `.btn-outline` override** (Quality #8) | Resolved. Conflicting `color: var(--white)` rule removed. `.btn-outline` now correctly inherits `color: var(--text-color)` from its own definition. |
 | **Unnecessary JS on Landing Page** (Performance #7) | Resolved. `index.html` now loads only `core.js` (for particles). `data-chat.js` and `dashboard-ui.js` removed. |
 | **No pagination on list endpoints** (Roadmap #16 — partial) | Partially resolved. `/api/files` and `/api/chat/history` now support `?page=&per_page=` pagination with metadata. Shared `_paginate()` helper in `server.py`. Config via `app_config.DEFAULT_PAGE_SIZE` and `MAX_PAGE_SIZE`. `/api/data/<filename>` still returns full dataset unpaginated. |
+| **No Session Eviction** (Critical #2) | Resolved. Implemented TTL-based eviction on `SessionManager._sessions` via `app_state.py`. Added `session_mgr.remove_state(g.user_id)` call during logout in `server.py`. |
 
 ### New Additions
 
@@ -481,12 +477,12 @@ graph TD
 
 **What's strong:**
 - **Architecture**: Deduplicated multi-phase AI pipeline with intelligent data profiling, per-user DataFrame caching, token-efficient context building, and paginated list endpoints
-- **Security**: Defense-in-depth sandbox (AST + restricted builtins + subprocess + timeout), JWT authentication, per-user data isolation
+- **Security**: Defense-in-depth sandbox (AST + restricted builtins + subprocess + timeout), JWT authentication, per-user data isolation, API rate limiting
 - **UX / Design**: Complete brand identity with custom illustrations, frosted glass elements, SSE streaming phases, chart annotations, drag-and-drop dashboard, dark/light theme
 - **Infrastructure**: Supabase integration (Auth + Storage + PostgreSQL), session rehydration, per-user caching, consistent structured logging
 
 **What still needs attention:**
-- **Security hardening**: Zero SRI hashes on all 6 CDN dependencies, unpinned CDN versions, localStorage token storage, no rate limiting
+- **Security hardening**: Zero SRI hashes on all 6 CDN dependencies, unpinned CDN versions, localStorage token storage
 - **Code quality**: Zero test coverage, inconsistent error handling patterns, global JS namespace, legacy dead files
 - **Performance**: Subprocess spawned per query, O(n^2) particle animation, full dashboard grid re-render, `/api/data` still unpaginated for large datasets
 - **Accessibility**: Desktop-only (no responsive design), keyboard-inaccessible nav items, no ARIA live regions
