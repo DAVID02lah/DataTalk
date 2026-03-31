@@ -1,3 +1,4 @@
+// ============================================================
 // Dashboard Pinning
 // ============================================================
 
@@ -198,8 +199,78 @@ document.addEventListener('keydown', function (event) {
 });
 
 // ============================================================
-// Native Dashboard (replaces Streamlit)
+// GridStack-Based Dashboard (replaces old CSS grid)
 // ============================================================
+
+let dashboardGrid = null;              // GridStack instance
+let dashboardLayoutSaveDebounce = null; // Debounce layout saves
+let dashboardResizeDebounce = null;     // Debounce Plotly resize
+let activeCustomizerChartId = null;     // Currently customizing chart
+
+/**
+ * Initialize the GridStack instance for the pinned-chart dashboard.
+ */
+function initDashboardGridStack() {
+    if (dashboardGrid) return dashboardGrid;
+
+    const gridEl = document.getElementById('dashboard-grid-stack');
+    if (!gridEl) {
+        console.error('GridStack container #dashboard-grid-stack not found');
+        return null;
+    }
+
+    try {
+        dashboardGrid = GridStack.init({
+            column: 12,              // 12-column grid (Power BI standard)
+            cellHeight: 60,          // Each row = 60px
+            margin: 8,              // Gap between widgets
+            float: true,             // Allow items anywhere
+            animate: true,           // Smooth transitions
+            removable: false,        // Don't allow drag-out removal
+            maxRow: 12,              // Cap at 12 rows (720px)
+            resizable: {
+                handles: 'e, se, s, sw, w'  // Resize from edges
+            },
+            acceptWidgets: false,
+            disableOneColumnMode: true,
+        }, gridEl);
+
+        // When user finishes dragging/resizing, save layout (debounced)
+        dashboardGrid.on('change', () => {
+            clearTimeout(dashboardLayoutSaveDebounce);
+            dashboardLayoutSaveDebounce = setTimeout(() => {
+                saveDashboardLayoutFromGrid();
+            }, 500);
+        });
+
+        // Handle resize to update Plotly charts
+        dashboardGrid.on('resizestop', (event, el) => {
+            clearTimeout(dashboardResizeDebounce);
+            dashboardResizeDebounce = setTimeout(() => {
+                const plotEls = el.querySelectorAll('.js-plotly-plot');
+                plotEls.forEach(plotEl => {
+                    if (plotEl && typeof Plotly !== 'undefined' && plotEl.data) {
+                        try {
+                            Plotly.Plots.resize(plotEl);
+                        } catch (e) {
+                            console.warn('Failed to resize Plotly chart:', e);
+                        }
+                    }
+                });
+            }, 200);
+        });
+
+        return dashboardGrid;
+    } catch (e) {
+        console.error('Failed to initialize GridStack:', e);
+        return null;
+    }
+}
+
+// ============================================================
+// Fetch & Render Dashboard
+// ============================================================
+
 async function refreshDashboard() {
     try {
         const response = await fetch(`${App.API_BASE}/api/dashboard`, {
@@ -207,11 +278,13 @@ async function refreshDashboard() {
         });
         const data = await response.json();
         App.state.dashboardCharts = data.charts || [];
+        App.state.dashboardCards = data.cards || [];
         App.state.dashboardLoaded = true;
         renderDashboardGrid();
     } catch (e) {
         console.error("Failed to load dashboard:", e);
         App.state.dashboardCharts = [];
+        App.state.dashboardCards = [];
         App.state.dashboardLoaded = true;
         renderDashboardGrid();
     }
@@ -220,132 +293,198 @@ async function refreshDashboard() {
 function renderDashboardGrid() {
     if (!App.state.dashboardLoaded) return;
 
-    const grid = document.getElementById("dashboard-grid");
-    const empty = document.getElementById("dashboard-empty");
-    const countBadge = document.getElementById("dashboard-chart-count");
+    // Initialize GridStack if not already done
+    if (!dashboardGrid) {
+        if (!initDashboardGridStack()) {
+            console.error('Cannot render dashboard: grid not initialized');
+            return;
+        }
+    }
 
-    if (!grid) return;
+    const emptyEl = document.getElementById("dashboard-empty");
+    const countBadge = document.getElementById("dashboard-chart-count");
+    const charts = App.state.dashboardCharts || [];
+    const cards = App.state.dashboardCards || [];
+    const totalWidgets = charts.length + cards.length;
 
     // Update count
-    const n = App.state.dashboardCharts.length;
-    if (countBadge) countBadge.textContent = `${n} chart${n !== 1 ? "s" : ""}`;
+    if (countBadge) countBadge.textContent = `${totalWidgets} widget${totalWidgets !== 1 ? "s" : ""}`;
 
     // Empty state
-    if (n === 0) {
-        grid.style.display = "none";
-        if (empty) empty.style.display = "flex";
+    if (totalWidgets === 0) {
+        if (emptyEl) emptyEl.classList.remove("hidden");
+        try { dashboardGrid.removeAll(false); } catch (e) { }
         return;
     }
-    grid.style.display = "grid";
-    if (empty) empty.style.display = "none";
+    if (emptyEl) emptyEl.classList.add("hidden");
+
+    // Clear existing widgets safely
+    try {
+        dashboardGrid.removeAll(false);
+    } catch (e) {
+        console.warn('Failed to clear grid:', e);
+    }
 
     // Sort by position
-    const sorted = [...App.state.dashboardCharts].sort((a, b) => (a.position || 0) - (b.position || 0));
+    const sorted = [...charts].sort((a, b) => (a.position || 0) - (b.position || 0));
 
-    grid.innerHTML = sorted.map((chart) => {
-        const title = chart.title || "Untitled Chart";
-        const plotId = `dash-plot-${chart.id}`;
-        const colSpan = chart.colSpan || 1;
+    // Add each chart as a widget
+    sorted.forEach((chart, index) => {
+        if (!chart || !chart.id) return;
 
-        return `
-            <div class="dashboard-chart-card"
-                 draggable="true"
-                 data-chart-id="${chart.id}"
-                 data-col-span="${colSpan}">
-                <div class="dashboard-chart-title">
-                    <span class="drag-handle">
-                        <span class="drag-handle-dot-row">
-                            <span class="drag-handle-dot"></span>
-                            <span class="drag-handle-dot"></span>
-                        </span>
-                        <span class="drag-handle-dot-row">
-                            <span class="drag-handle-dot"></span>
-                            <span class="drag-handle-dot"></span>
-                        </span>
-                        <span class="drag-handle-dot-row">
-                            <span class="drag-handle-dot"></span>
-                            <span class="drag-handle-dot"></span>
-                        </span>
-                    </span>
-                    ${escapeHtml(title)}
-                </div>
-                <div class="dashboard-chart-plot" id="${plotId}"></div>
-                <div class="dashboard-chart-actions">
-                    <div class="card-resize-controls">
-                        <button class="card-resize-btn ${colSpan === 1 ? 'active' : ''}"
-                                onclick="setCardColSpan('${chart.id}', 1)" title="1 column">1</button>
-                        <button class="card-resize-btn ${colSpan === 2 ? 'active' : ''}"
-                                onclick="setCardColSpan('${chart.id}', 2)" title="2 columns">2</button>
-                        <button class="card-resize-btn ${colSpan === 3 ? 'active' : ''}"
-                                onclick="setCardColSpan('${chart.id}', 3)" title="3 columns">3</button>
-                    </div>
-                    <button class="btn-dash-action" onclick="downloadDashChart('${plotId}')">Download PNG</button>
-                    <button class="btn-dash-action btn-dash-danger" onclick="removeDashChart('${chart.id}')">Remove</button>
-                </div>
-            </div>
-        `;
-    }).join("");
+        const widgetId = `widget-dash-${chart.id}`;
 
-    // Attach drag-and-drop listeners
-    initDashboardDragAndDrop();
+        // Use saved grid position if available, otherwise auto-layout
+        const gridPos = chart.gridPos || {};
+        const layoutOverrides = {
+            x: gridPos.x ?? (index % 2) * 6,
+            y: gridPos.y ?? Math.floor(index / 2) * 6,
+            w: gridPos.w ?? 6,
+            h: gridPos.h ?? 6,
+        };
 
-    // Render Plotly charts after DOM insert
-    requestAnimationFrame(() => {
-        sorted.forEach((chart) => {
-            const plotId = `dash-plot-${chart.id}`;
-            const el = document.getElementById(plotId);
-            if (!el || !chart.chart) return;
+        addDashboardChartWidget(chart, widgetId, layoutOverrides);
+    });
 
-            try {
-                const colSpan = chart.colSpan || 1;
-                const layout = {
-                    ...(chart.chart.layout || {}),
-                    template: "plotly_white",
-                    font: { family: "Inter, sans-serif" },
-                    autosize: true,
-                    width: null,
-                    title: "",
-                    margin: { l: 40, r: 40, t: 30, b: 40 },
-                    height: colSpan === 3 ? CONFIG.CHART_HEIGHT_3_COL : CONFIG.CHART_HEIGHT_1_COL,
-                };
-                Plotly.newPlot(plotId, chart.chart.data, layout, {
-                    responsive: true,
-                    displayModeBar: true,
-                    modeBarButtonsToRemove: ["lasso2d", "select2d"],
-                });
-            } catch (e) {
-                el.innerHTML = '<p style="color: #ea4335; padding: 20px;">Error rendering chart</p>';
-                console.error("Dashboard chart render error:", e);
-            }
-        });
+    // Add card widgets
+    cards.forEach((card, index) => {
+        if (!card || !card.id) return;
 
-        // Auto-resize all charts after CSS grid settles
-        resizeAllDashboardCharts();
+        const widgetId = `widget-card-${card.id}`;
+        const gridPos = card.gridPos || {};
+        const layoutOverrides = {
+            x: gridPos.x ?? (index % 4) * 3,
+            y: gridPos.y ?? Math.floor(index / 4) * 2 + (charts.length > 0 ? 10 : 0),
+            w: gridPos.w ?? 3,
+            h: gridPos.h ?? 2,
+        };
+
+        addDashboardCardWidget(card, widgetId, layoutOverrides);
     });
 }
 
-function resizeAllDashboardCharts() {
-    // Give the CSS grid time to settle before telling Plotly to resize
-    setTimeout(() => {
-        document.querySelectorAll(".dashboard-chart-plot").forEach(el => {
-            if (el && el.data) {
-                Plotly.Plots.resize(el);
+/**
+ * Add a single pinned chart as a GridStack widget.
+ */
+function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
+    if (!dashboardGrid || !chartData) return;
+
+    const chartId = chartData.id;
+    const title = chartData.title || 'Untitled Chart';
+    const plotId = `dash-plot-${chartId}`;
+    const hasChart = chartData.chart && chartData.chart.data;
+
+    const contentHtml = `
+        <div class="widget-header" data-widget-id="${widgetId}">
+            <span class="widget-title">${escapeHtml(title)}</span>
+            <div class="widget-actions">
+                <button class="widget-btn" onclick="openChartCustomizer('${chartId}')" title="Customize">⚙️</button>
+                <button class="widget-btn" onclick="openFullscreenChart('${plotId}')" title="Fullscreen">🔍</button>
+                <button class="widget-btn" onclick="downloadDashChart('${plotId}')" title="Download PNG">📥</button>
+                <button class="widget-btn widget-btn-danger" onclick="removeDashChart('${chartId}')" title="Remove">×</button>
+            </div>
+        </div>
+        <div class="widget-body" id="body-${chartId}">
+            ${hasChart
+            ? `<div id="${plotId}" class="chart-container"></div>`
+            : `<div class="widget-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">No chart data</div>`
+        }
+        </div>
+    `;
+
+    try {
+        dashboardGrid.addWidget({
+            x: layoutOverrides.x,
+            y: layoutOverrides.y,
+            w: layoutOverrides.w,
+            h: layoutOverrides.h,
+            id: widgetId,
+            content: contentHtml,
+        });
+    } catch (e) {
+        console.error('Failed to add dashboard widget:', e);
+        return;
+    }
+
+    // Mount Plotly after DOM insertion
+    if (hasChart) {
+        requestAnimationFrame(() => {
+            const plotEl = document.getElementById(plotId);
+            if (plotEl && typeof Plotly !== 'undefined') {
+                try {
+                    mountPlotlyChart(plotId, chartData.chart);
+                } catch (e) {
+                    console.error('Failed to mount Plotly chart:', e);
+                    plotEl.innerHTML = '<div style="color: #ea4335; padding: 20px;">Error rendering chart</div>';
+                }
             }
         });
-    }, CONFIG.CHART_RESIZE_DELAY);
+    }
+}
+
+/**
+ * mountPlotlyChart — renders Plotly JSON into a DOM element.
+ * (Shared utility for dashboard widgets)
+ */
+function mountPlotlyChart(chartElementId, chartJson) {
+    if (!chartElementId || !chartJson) return;
+    setTimeout(() => {
+        try {
+            const layout = {
+                ...(chartJson.layout || {}),
+                template: "plotly_white",
+                font: { family: "Inter, sans-serif" },
+                autosize: true,
+                width: undefined,
+                height: undefined,
+                title: "",
+                margin: { l: 50, r: 30, t: 30, b: 50 },
+            };
+            Plotly.newPlot(chartElementId, chartJson.data, layout, {
+                responsive: true,
+                displayModeBar: true,
+                modeBarButtonsToRemove: ["lasso2d", "select2d"],
+            });
+        } catch (e) {
+            console.error("Plotly render error:", e);
+            const el = document.getElementById(chartElementId);
+            if (el) el.innerHTML = '<p style="color: #ea4335;">Error rendering chart</p>';
+        }
+    }, CONFIG.PLOTLY_RENDER_TIMEOUT);
 }
 
 // ============================================================
-// Dashboard: Column Span & Persistence
+// Layout Persistence (save GridStack positions to backend)
 // ============================================================
-async function setCardColSpan(chartId, newSpan) {
-    const chart = App.state.dashboardCharts.find(c => c.id === chartId);
-    if (!chart) return;
-    chart.colSpan = newSpan;
 
-    // Full re-render so all charts resize properly
-    renderDashboardGrid();
-    await saveDashboardToBackend();
+function saveDashboardLayoutFromGrid() {
+    if (!dashboardGrid) return;
+
+    try {
+        const gridItems = dashboardGrid.save(false);
+        if (!gridItems || !Array.isArray(gridItems)) return;
+
+        // Update positions for both charts and cards
+        gridItems.forEach(item => {
+            if (!item || !item.id) return;
+            const pos = { x: item.x, y: item.y, w: item.w, h: item.h };
+
+            if (item.id.startsWith('widget-dash-')) {
+                const chartId = item.id.replace('widget-dash-', '');
+                const chart = (App.state.dashboardCharts || []).find(c => c.id === chartId);
+                if (chart) chart.gridPos = pos;
+            } else if (item.id.startsWith('widget-card-')) {
+                const cardId = item.id.replace('widget-card-', '');
+                const card = (App.state.dashboardCards || []).find(c => c.id === cardId);
+                if (card) card.gridPos = pos;
+            }
+        });
+
+        // Persist to backend
+        saveDashboardToBackend();
+    } catch (e) {
+        console.error('Failed to save dashboard layout:', e);
+    }
 }
 
 async function saveDashboardToBackend() {
@@ -353,7 +492,10 @@ async function saveDashboardToBackend() {
         await fetch(`${App.API_BASE}/api/dashboard`, {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({ charts: App.state.dashboardCharts }),
+            body: JSON.stringify({
+                charts: App.state.dashboardCharts || [],
+                cards: App.state.dashboardCards || [],
+            }),
         });
     } catch (e) {
         console.error("Failed to save dashboard:", e);
@@ -361,78 +503,36 @@ async function saveDashboardToBackend() {
 }
 
 // ============================================================
-// Dashboard: HTML5 Drag & Drop
+// Resize all dashboard charts (called on tab switch)
 // ============================================================
-function initDashboardDragAndDrop() {
-    const grid = document.getElementById("dashboard-grid");
-    if (!grid) return;
 
-    const cards = grid.querySelectorAll(".dashboard-chart-card");
+function resizeDashboardOnActivate() {
+    if (!dashboardGrid) return;
 
-    cards.forEach(card => {
-        card.addEventListener("dragstart", (e) => {
-            // Prevent drag from action buttons
-            if (e.target.closest(".dashboard-chart-actions") ||
-                e.target.closest(".btn-dash-action") ||
-                e.target.closest(".card-resize-btn")) {
-                e.preventDefault();
-                return;
-            }
-            App.state.draggedChartId = card.getAttribute("data-chart-id");
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData("text/plain", App.state.draggedChartId);
-            requestAnimationFrame(() => card.classList.add("dragging"));
-        });
-
-        card.addEventListener("dragend", () => {
-            card.classList.remove("dragging");
-            App.state.draggedChartId = null;
-            grid.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over"));
-        });
-
-        card.addEventListener("dragover", (e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-            const thisId = card.getAttribute("data-chart-id");
-            if (thisId !== App.state.draggedChartId) {
-                card.classList.add("drag-over");
-            }
-        });
-
-        card.addEventListener("dragleave", (e) => {
-            if (!card.contains(e.relatedTarget)) {
-                card.classList.remove("drag-over");
-            }
-        });
-
-        card.addEventListener("drop", (e) => {
-            e.preventDefault();
-            card.classList.remove("drag-over");
-
-            const targetId = card.getAttribute("data-chart-id");
-            if (!App.state.draggedChartId || App.state.draggedChartId === targetId) return;
-
-            const fromIndex = App.state.dashboardCharts.findIndex(c => c.id === App.state.draggedChartId);
-            const toIndex = App.state.dashboardCharts.findIndex(c => c.id === targetId);
-            if (fromIndex === -1 || toIndex === -1) return;
-
-            // Remove dragged item and insert at target position
-            const [movedChart] = App.state.dashboardCharts.splice(fromIndex, 1);
-            App.state.dashboardCharts.splice(toIndex, 0, movedChart);
-
-            // Reassign sequential positions
-            App.state.dashboardCharts.forEach((c, i) => { c.position = i; });
-
-            // Re-render and persist
-            renderDashboardGrid();
-            saveDashboardToBackend();
-        });
-    });
+    // Give GridStack time to become visible and settle
+    setTimeout(() => {
+        const gridItems = dashboardGrid.getGridItems();
+        if (gridItems && gridItems.length > 0) {
+            gridItems.forEach(item => {
+                const plotEls = item.querySelectorAll('.js-plotly-plot');
+                plotEls.forEach(plotEl => {
+                    if (plotEl && plotEl.data && typeof Plotly !== 'undefined') {
+                        try {
+                            Plotly.Plots.resize(plotEl);
+                        } catch (e) {
+                            console.warn('Failed to resize chart on tab switch:', e);
+                        }
+                    }
+                });
+            });
+        }
+    }, 200);
 }
 
 // ============================================================
 // Dashboard: Remove, Download, Clear
 // ============================================================
+
 async function removeDashChart(chartId) {
     try {
         const resp = await fetch(`${App.API_BASE}/api/dashboard/remove/${chartId}`, {
@@ -464,16 +564,360 @@ function downloadDashChart(plotId) {
 }
 
 async function clearAllCharts() {
-    if (!confirm("Remove all charts from the dashboard?")) return;
+    if (!confirm("Remove all widgets from the dashboard?")) return;
     try {
         await fetch(`${App.API_BASE}/api/dashboard`, {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({ charts: [] }),
+            body: JSON.stringify({ charts: [], cards: [] }),
         });
         refreshDashboard();
     } catch (e) {
         alert("Error clearing dashboard.");
         console.error(e);
+    }
+}
+
+/**
+ * Clear dashboard widgets from the UI (called by clearChatHistory).
+ */
+function clearDashboard() {
+    App.state.dashboardCharts = [];
+    App.state.dashboardCards = [];
+    App.state.dashboardLoaded = false;
+    if (dashboardGrid) {
+        try { dashboardGrid.removeAll(false); } catch (e) { }
+    }
+    const emptyEl = document.getElementById("dashboard-empty");
+    if (emptyEl) emptyEl.classList.remove("hidden");
+    const countBadge = document.getElementById("dashboard-chart-count");
+    if (countBadge) countBadge.textContent = "0 widgets";
+}
+
+// ============================================================
+// Chart Customizer Panel
+// ============================================================
+
+function openChartCustomizer(chartId) {
+    activeCustomizerChartId = chartId;
+    const panel = document.getElementById('chart-customizer');
+    if (!panel) return;
+
+    panel.classList.add('visible');
+
+    const plotEl = document.getElementById(`dash-plot-${chartId}`);
+    if (!plotEl || !plotEl.data) {
+        console.warn('No plot data for customizer');
+        return;
+    }
+
+    // Populate current values
+    const layout = plotEl.layout || {};
+
+    const titleInput = document.getElementById('custom-title');
+    const xaxisInput = document.getElementById('custom-xaxis');
+    const yaxisInput = document.getElementById('custom-yaxis');
+    const scaleSelect = document.getElementById('custom-scale');
+
+    if (titleInput) {
+        titleInput.value = (typeof layout.title === 'object' ? layout.title.text : layout.title) || '';
+    }
+    if (xaxisInput) {
+        xaxisInput.value = layout.xaxis?.title?.text || layout.xaxis?.title || '';
+    }
+    if (yaxisInput) {
+        yaxisInput.value = layout.yaxis?.title?.text || layout.yaxis?.title || '';
+    }
+    if (scaleSelect) {
+        scaleSelect.value = layout.yaxis?.type || 'linear';
+    }
+
+    // Generate color pickers for each trace
+    const colorDiv = document.getElementById('custom-color-pickers');
+    if (colorDiv && plotEl.data) {
+        colorDiv.innerHTML = plotEl.data.map((trace, i) => {
+            const color = getTraceColor(trace);
+            const name = trace.name || `Trace ${i + 1}`;
+            return `
+                <div class="color-picker-row">
+                    <input type="color" value="${color}" onchange="applyTraceColor(${i}, this.value)">
+                    <span>${escapeHtml(name)}</span>
+                </div>
+            `;
+        }).join('');
+    }
+}
+
+function getTraceColor(trace) {
+    const color = trace.marker?.color || trace.line?.color || '#4285f4';
+    if (Array.isArray(color)) return color[0] || '#4285f4';
+    if (typeof color === 'string' && color.startsWith('#')) return color;
+    if (typeof color === 'string' && color.startsWith('rgb')) {
+        return '#4285f4'; // Default if can't parse
+    }
+    return '#4285f4';
+}
+
+function closeChartCustomizer() {
+    const panel = document.getElementById('chart-customizer');
+    if (panel) panel.classList.remove('visible');
+    activeCustomizerChartId = null;
+}
+
+function applyCustomTitle() {
+    if (!activeCustomizerChartId) return;
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+    const titleInput = document.getElementById('custom-title');
+    if (!plotEl || !titleInput || typeof Plotly === 'undefined') return;
+
+    try {
+        Plotly.relayout(plotEl, { 'title.text': titleInput.value });
+    } catch (e) {
+        console.error('Failed to update title:', e);
+    }
+}
+
+function applyTraceColor(traceIndex, color) {
+    if (!activeCustomizerChartId) return;
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+    if (!plotEl || typeof Plotly === 'undefined') return;
+
+    try {
+        Plotly.restyle(plotEl, { 'marker.color': color, 'line.color': color }, [traceIndex]);
+    } catch (e) {
+        console.error('Failed to update color:', e);
+    }
+}
+
+function applyCustomAxis(axis) {
+    if (!activeCustomizerChartId) return;
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+    const input = document.getElementById(`custom-${axis}axis`);
+    if (!plotEl || !input || typeof Plotly === 'undefined') return;
+
+    try {
+        Plotly.relayout(plotEl, { [`${axis}axis.title.text`]: input.value });
+    } catch (e) {
+        console.error('Failed to update axis:', e);
+    }
+}
+
+function applyCustomScale() {
+    if (!activeCustomizerChartId) return;
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+    const select = document.getElementById('custom-scale');
+    if (!plotEl || !select || typeof Plotly === 'undefined') return;
+
+    try {
+        Plotly.relayout(plotEl, { 'yaxis.type': select.value });
+    } catch (e) {
+        console.error('Failed to update scale:', e);
+    }
+}
+
+function applyCustomLegend() {
+    if (!activeCustomizerChartId) return;
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+    const select = document.getElementById('custom-legend');
+    if (!plotEl || !select || typeof Plotly === 'undefined') return;
+
+    const pos = select.value;
+    const legendConfig = {
+        right: { showlegend: true, 'legend.orientation': 'v', 'legend.x': 1.02, 'legend.y': 1 },
+        bottom: { showlegend: true, 'legend.orientation': 'h', 'legend.x': 0.5, 'legend.y': -0.15, 'legend.xanchor': 'center' },
+        top: { showlegend: true, 'legend.orientation': 'h', 'legend.x': 0.5, 'legend.y': 1.1, 'legend.xanchor': 'center' },
+        none: { showlegend: false },
+    };
+
+    try {
+        Plotly.relayout(plotEl, legendConfig[pos] || {});
+    } catch (e) {
+        console.error('Failed to update legend:', e);
+    }
+}
+
+// ============================================================
+// KPI Card Widget
+// ============================================================
+
+/**
+ * Add a single KPI card as a GridStack widget.
+ */
+function addDashboardCardWidget(cardData, widgetId, layoutOverrides) {
+    if (!dashboardGrid || !cardData) return;
+
+    const cardId = cardData.id;
+
+    // Format the value
+    let formattedValue = '—';
+    if (cardData.value !== null && cardData.value !== undefined) {
+        if (typeof cardData.value === 'number') {
+            formattedValue = cardData.value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        } else {
+            formattedValue = String(cardData.value);
+        }
+    }
+
+    const aggLabel = (cardData.aggregation || 'count').charAt(0).toUpperCase() + (cardData.aggregation || 'count').slice(1);
+    const title = cardData.title || `${aggLabel} of ${cardData.column || 'Unknown'}`;
+
+    const contentHtml = `
+        <div class="widget-header" data-widget-id="${widgetId}">
+            <span class="widget-title">${escapeHtml(title)}</span>
+            <div class="widget-actions">
+                <button class="widget-btn widget-btn-danger" onclick="removeDashCard('${cardId}')" title="Remove">×</button>
+            </div>
+        </div>
+        <div class="widget-body kpi-card-body" id="card-body-${cardId}">
+            <div class="kpi-value">${escapeHtml(formattedValue)}</div>
+            <div class="kpi-label">${escapeHtml(aggLabel)} of ${escapeHtml(cardData.column || '')}</div>
+        </div>
+    `;
+
+    try {
+        dashboardGrid.addWidget({
+            x: layoutOverrides.x,
+            y: layoutOverrides.y,
+            w: layoutOverrides.w,
+            h: layoutOverrides.h,
+            id: widgetId,
+            content: contentHtml,
+        });
+    } catch (e) {
+        console.error('Failed to add card widget:', e);
+    }
+}
+
+async function removeDashCard(cardId) {
+    if (!App.state.dashboardCards) return;
+    App.state.dashboardCards = App.state.dashboardCards.filter(c => c.id !== cardId);
+    await saveDashboardToBackend();
+    renderDashboardGrid();
+}
+
+// ============================================================
+// Add Card Modal
+// ============================================================
+
+async function showAddCardModal() {
+    const modal = document.getElementById("add-card-modal");
+    const titleInput = document.getElementById("card-title-input");
+    const errorEl = document.getElementById("card-add-error");
+
+    if (modal) modal.style.display = "flex";
+    if (titleInput) titleInput.value = "";
+    if (errorEl) errorEl.style.display = "none";
+
+    // Populate column dropdown from active file schema
+    const colSelect = document.getElementById("card-column-select");
+    if (!colSelect) return;
+
+    colSelect.innerHTML = '<option value="">Loading columns...</option>';
+
+    try {
+        let columns = [];
+
+        if (App.state.activeFile && App.state.activeFile.summary && App.state.activeFile.summary.columns) {
+            columns = App.state.activeFile.summary.columns;
+        } else if (App.state.activeFile && App.state.activeFile.filename) {
+            const response = await fetch(`${App.API_BASE}/api/data-summary/${encodeURIComponent(App.state.activeFile.filename)}`, {
+                headers: App.getAuthHeaders()
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                columns = data.summary?.columns || [];
+            }
+        }
+
+        if (columns.length > 0) {
+            colSelect.innerHTML = '<option value="">Select a column...</option>' +
+                columns.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+        } else {
+            colSelect.innerHTML = '<option value="">No columns available — upload a dataset first</option>';
+        }
+    } catch (e) {
+        console.error('Failed to load columns:', e);
+        colSelect.innerHTML = '<option value="">Error loading columns</option>';
+    }
+}
+
+function closeAddCardModal() {
+    const modal = document.getElementById("add-card-modal");
+    if (modal) modal.style.display = "none";
+}
+
+async function submitAddCard() {
+    const colSelect = document.getElementById("card-column-select");
+    const aggSelect = document.getElementById("card-agg-select");
+    const titleInput = document.getElementById("card-title-input");
+    const errEl = document.getElementById("card-add-error");
+    const btn = document.getElementById("btn-submit-card");
+
+    const column = colSelect ? colSelect.value : '';
+    const aggregation = aggSelect ? aggSelect.value : 'count';
+    const title = titleInput ? titleInput.value.trim() : '';
+
+    if (!column) {
+        if (errEl) {
+            errEl.textContent = "Please select a column.";
+            errEl.style.display = "block";
+        }
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = "Adding...";
+    }
+    if (errEl) errEl.style.display = "none";
+
+    try {
+        // Fetch the computed value from the backend
+        const response = await fetch(`${App.API_BASE}/api/dashboard/card-data`, {
+            method: "POST",
+            headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ column, aggregation })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            if (errEl) {
+                errEl.textContent = data.error;
+                errEl.style.display = "block";
+            }
+            return;
+        }
+
+        // Build the card object
+        const aggLabel = aggregation.charAt(0).toUpperCase() + aggregation.slice(1);
+        const newCard = {
+            id: `card_${Date.now()}`,
+            column: column,
+            aggregation: aggregation,
+            title: title || `${aggLabel} of ${column}`,
+            value: data.value,
+        };
+
+        // Add to state and persist
+        if (!App.state.dashboardCards) App.state.dashboardCards = [];
+        App.state.dashboardCards.push(newCard);
+        await saveDashboardToBackend();
+
+        closeAddCardModal();
+        renderDashboardGrid();
+
+    } catch (e) {
+        console.error('Failed to add card:', e);
+        if (errEl) {
+            errEl.textContent = "Network error while connecting to server.";
+            errEl.style.display = "block";
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = "Add Card";
+        }
     }
 }

@@ -16,7 +16,7 @@ description: Comprehensive guide for understanding and contributing to the Data 
 - **SSE Streaming**: Real-time pipeline progress updates (extracting, generating, executing, interpreting)
 - **Interactive Charts**: Plotly.js charts with annotations, download, pin-to-dashboard, and fullscreen
 - **Dashboard**: Drag-and-drop visualization grid with column resizing, persisted to Supabase
-- **Dark Mode**: Full light/dark theme toggle with localStorage persistence and `prefers-color-scheme` detection
+- **Theme**: Single light-theme visual system using shared CSS variables
 - **Session Persistence**: Chat history, dashboard configs, and user profiles stored in Supabase PostgreSQL
 
 ---
@@ -74,9 +74,9 @@ description: Comprehensive guide for understanding and contributing to the Data 
 
 | File | Lines | Purpose |
 |---|---|---|
-| `dashboard.html` | ~264 | Main SPA shell. Sidebar navigation (3 views), top bar (title, theme toggle, user profile), content area (upload zone, chat, dashboard grid), fullscreen modal. Loads 6 CDN libraries. |
+| `dashboard.html` | ~264 | Main SPA shell. Sidebar navigation (3 views), top bar (title, user profile), content area (upload zone, chat, dashboard grid), fullscreen modal. Loads 6 CDN libraries. |
 | `js/constants.js` | ~13 | Frontend configuration constants: chart heights, render timeouts, resize delays. |
-| `js/core.js` | ~389 | App singleton (`App`): auth state, JWT headers, session validation, sign-out, user profile, theme init/toggle. Utilities: `escapeHtml()`, `sanitizeHtml()` (DOMPurify), `renderMarkdown()` (Marked.js). Particle canvas animation. DOM initialization, view switching. |
+| `js/core.js` | ~389 | App singleton (`App`): auth state, JWT headers, session validation, sign-out, user profile. Utilities: `escapeHtml()`, `sanitizeHtml()` (DOMPurify), `renderMarkdown()` (Marked.js). Particle canvas animation. DOM initialization, view switching. |
 | `js/data-chat.js` | ~734 | File upload flow (client-side 10MB validation, FormData POST, Handsontable grid). SSE chat streaming (manual `ReadableStream` parsing, not `EventSource`). Chart rendering (`mountPlotlyChart`), typing indicators, suggestion chips, chat history, annotations, regenerate. |
 | `js/dashboard-ui.js` | ~479 | Dashboard chart pinning, visualization grid, HTML5 drag-and-drop reordering, column-span resizing (1/2/3 cols), fullscreen modal with focus trap + Escape key, chart download (PNG), smart question fetching, data preview panel. |
 | `index.html` | ~67 | Marketing landing page with particle canvas background. |
@@ -87,9 +87,9 @@ description: Comprehensive guide for understanding and contributing to the Data 
 
 | File | Lines | Purpose |
 |---|---|---|
-| `styles.css` | ~566 | Global styles, CSS custom properties (`:root` + `[data-theme="dark"]`), landing page, buttons, hero, responsive breakpoint (768px), suggestion chips. |
+| `styles.css` | ~566 | Global styles, CSS custom properties (`:root`), landing page, buttons, hero, responsive breakpoint (768px), suggestion chips. |
 | `dashboard.css` | ~6 | CSS `@import` manifest for the 4 dashboard stylesheets below. |
-| `css/dashboard-layout.css` | ~206 | Dashboard structure: sidebar (260px), top bar, content area, nav items, user profile pill, Handsontable dark mode override. |
+| `css/dashboard-layout.css` | ~206 | Dashboard structure: sidebar (260px), top bar, content area, nav items, user profile pill, Handsontable light-mode override. |
 | `css/dashboard-chat.css` | ~340 | Chat messages, avatars, typing indicator (bouncing dots), input bar (glassmorphism), code blocks, chart containers, suggestion chips. |
 | `css/dashboard-grid.css` | ~227 | Visualization grid (CSS Grid, 3-column), chart cards, drag-and-drop states, resize controls, empty state. |
 | `css/dashboard-overlays.css` | ~467 | Upload banner, data preview panel, fullscreen modal, stats cards, data tables, follow-up chips, error banners, annotations, streaming text animation. |
@@ -304,7 +304,7 @@ If code generation/execution fails entirely after all retries, fall back to `gem
 - **Chart Template**: `plotly_white` with `font.family = "Inter, sans-serif"`.
 - **Donut Charts**: Use `hole: 0.4`.
 - **CSS Variables** (defined in `styles.css` `:root`): `--primary-color`, `--text-color`, `--text-light`, `--border-color`, `--bg-gradient`, `--surface`, `--surface-hover`, `--card-bg`, `--shadow`, `--font-family`.
-- **Dark Mode**: `[data-theme="dark"]` overrides all CSS variables. Toggle in top bar, persisted in `localStorage("theme")`, auto-detects `prefers-color-scheme`.
+- **Theme**: A single light theme powered by shared CSS variables.
 - **Glassmorphism**: Sidebar and input bar use `backdrop-filter: blur()` with semi-transparent backgrounds.
 
 ---

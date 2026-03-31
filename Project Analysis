@@ -1,6 +1,6 @@
 # Data Talk — Project Analysis
 
-> **Generated:** 2026-03-16 | **Total LOC:** ~7,162 (2,479 backend + 4,683 frontend) across 21 source files
+> **Generated:** 2026-03-16 | **Updated:** 2026-03-31 | **Total LOC:** ~7,162 (2,479 backend + 4,683 frontend) across 21 source files
 
 ---
 
@@ -45,6 +45,7 @@ graph LR
 A vanilla HTML/JS frontend communicates with a Flask backend (Python). The backend orchestrates a multi-phase AI pipeline: **extract → generate code → execute in sandbox → interpret results**. Authentication, file storage, and persistent data are handled by **Supabase** (Auth, Storage, PostgreSQL). LLM operations use the **Google Gemini 3.1 Flash Lite Preview** model.
 
 **Recent major changes:**
+- **CSS Organization Fixed** (2026-03-31): All CSS files now consolidated in `/css/` folder with clear naming scheme; `styles.css` and `dashboard.css` moved from root; all HTML references updated
 - Complete UI revamp with new pink (#e95484) / navy (#2d2e3e) / beige (#f8f7f2) brand palette
 - Custom illustrated characters for landing page (7 PNG assets)
 - Chat pipeline deduplicated into shared `_run_analysis_pipeline()` generator
@@ -171,7 +172,6 @@ graph TD
     SIDE --> CLEAR[Clear Chat / Sign Out]
 
     TOP --> TITLE[Page Title]
-    TOP --> THEME[Dark/Light Toggle]
     TOP --> PROFILE[User Profile Pill<br>from Supabase Auth]
 
     MAIN --> VIEW1["Data Connector View<br>— Upload Zone drag/drop<br>— Client-side 10MB validation<br>— Handsontable Grid<br>— Data Preview Panel"]
@@ -190,16 +190,16 @@ graph TD
 
 ### Brand Palette
 
-| Token | Light Mode | Dark Mode | Usage |
-|-------|-----------|-----------|-------|
-| `--primary-color` | `#e95484` (Pink) | `#7aabf7` (Blue) | CTAs, active states, highlights |
-| `--secondary-color` | `#2d2e3e` (Navy) | `#1a1a24` | Dark sections, footer |
-| `--background` | `#f8f7f2` (Beige) | `#000000` | Page background |
-| `--surface-primary` | `#ffffff` | `#121212` | Cards, modals |
-| `--surface-secondary` | `#fdfdfb` | `rgba(18,18,18,0.9)` | Sidebar, input |
-| `--surface-tertiary` | `#f0eee2` | `rgba(18,18,18,0.7)` | Chips, code backgrounds |
-| `--text-color` | `#2d2e3e` | `#e8eaed` | Primary text |
-| `--text-light` | `#525368` | `#9aa0a6` | Secondary text |
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--primary-color` | `#e95484` (Pink) | CTAs, active states, highlights |
+| `--secondary-color` | `#2d2e3e` (Navy) | Feature sections, footer |
+| `--background` | `#f8f7f2` (Beige) | Page background |
+| `--surface-primary` | `#ffffff` | Cards, modals |
+| `--surface-secondary` | `#fdfdfb` | Sidebar, input |
+| `--surface-tertiary` | `#f0eee2` | Chips, code backgrounds |
+| `--text-color` | `#2d2e3e` | Primary text |
+| `--text-light` | `#525368` | Secondary text |
 
 ### Typography
 - **Primary font**: Inter, Plus Jakarta Sans (Google Fonts)
@@ -207,7 +207,7 @@ graph TD
 - **Body**: Inter 400/500/600
 
 ### Component Library
-- **Buttons**: `.btn-primary` (pink), `.btn-outline` (bordered), `.btn-navy` (dark), `.btn-lg` (large)
+- **Buttons**: `.btn-primary` (pink), `.btn-outline` (bordered), `.btn-navy` (navy), `.btn-lg` (large)
 - **Cards**: Rounded corners (`border-radius: 2rem`), soft shadows, hover lift effect
 - **Input wrapper**: Solid background with lift-on-focus effect, soft shadows
 - **Chips**: Rounded pills with hover color transition to primary
@@ -241,8 +241,8 @@ graph TD
 | 9 | **SSE Streaming Responses** | `/api/chat/stream` endpoint streams pipeline phases in real-time via Server-Sent Events. Frontend shows live progress updates (extracting → generating → executing → interpreting) instead of a static spinner. |
 | 10 | **Graceful Degradation** | Code execution has 2 retry attempts with error feedback to Gemini, plus a text-only fallback (Phase 3). If code fails completely, users still get useful analysis. Cached results show a "Cached" badge for transparency. |
 | 11 | **Polished UI with Custom Brand** | New pink/navy/beige brand palette with 7 custom illustrated character assets. Bento grid layout for landing page. Smooth micro-interactions (hover lifts, gradient avatars, animated typing dots). CSS containment for scroll performance. |
-| 12 | **Full Dark Mode** | Complete `[data-theme="dark"]` overrides across all CSS files. Auto-detection via `prefers-color-scheme`. Theme toggle with localStorage persistence. Handsontable runtime color-scheme patching. |
-| 13 | **Clean Modular CSS** | Stylesheets split into 5 concerns: `styles.css` (global/landing), `dashboard-layout.css`, `dashboard-chat.css`, `dashboard-grid.css`, `dashboard-overlays.css`. Imported via manifest (`dashboard.css`). CSS custom properties for all theming. |
+| 12 | **Unified Theme Tokens** | Shared CSS variables power a consistent single-theme experience across all UI surfaces and dashboard modules. |
+| 13 | **Clean Modular CSS** | All stylesheets properly organized in `/css/` folder with clear separation of concerns: `styles.css` (global/landing), `dashboard.css` (manifest/imports), `dashboard-layout.css`, `dashboard-chat.css`, `dashboard-grid.css`, `dashboard-overlays.css`, `data-dashboard.css`. CSS custom properties for all theming. |
 | 14 | **Consistent Structured Logging** | All backend services use Python's `logging` module with named loggers (`data_talk`, `data_talk.auth`, `data_talk.gemini`). `_log_event()` emits structured JSON logs. Token usage tracked for all LLM calls. |
 | 15 | **DOMPurify XSS Prevention** | All user-generated and LLM-generated markdown is sanitised through a `marked.js` → `DOMPurify` pipeline before DOM insertion. Custom `escapeHtml()` fallback if DOMPurify is unavailable. |
 | 16 | **Per-User Query Caching** | LRU cache (300 items) per user prevents redundant API calls for repeated questions, saving both time and API costs. Thread-safe via `threading.Lock`. |
@@ -369,13 +369,13 @@ graph TD
 | `dashboard.html` | 263 | Main SPA shell — sidebar, 3 views, fullscreen modal, CDN dependencies | 🟡 Zero SRI hashes on 6 CDN resources; unpinned versions |
 | `js/data-chat.js` | 727 | File upload, SSE chat streaming, chart rendering, typing indicators, annotations | 🟢 Clean; innerHTML patterns (sanitised via DOMPurify) |
 | `js/dashboard-ui.js` | 479 | Dashboard grid, drag-and-drop, fullscreen modal with focus trap, chart management | 🟡 Full grid re-render on every change; `alert()` for errors |
-| `js/core.js` | 434 | App singleton, auth, theme toggle, particle animation, DOM initialization | 🟡 O(n^2) particles; global namespace; load order dependency |
+| `js/core.js` | 434 | App singleton, auth, particle animation, DOM initialization | 🟡 O(n^2) particles; global namespace; load order dependency |
 | `login.html` | 374 | Supabase Auth page — sign in/up toggle, inline styles + scripts | 🟡 localStorage tokens; no ARIA live regions |
-| `styles.css` | 775 | Global styles, CSS variables, dark mode, landing page, responsive (1 breakpoint) | 🟢 Clean brand palette; single breakpoint |
+| `styles.css` | 775 | Global styles, CSS variables, landing page, responsive (1 breakpoint) | 🟢 Clean brand palette; single breakpoint |
 | `css/dashboard-overlays.css` | 460 | Upload banner, data preview panel, fullscreen modal, stats, tables, annotations | 🟢 Well-structured |
 | `css/dashboard-chat.css` | 351 | Chat messages, avatars, typing indicator, input bar, suggestion chips | 🟢 Clean |
 | `css/dashboard-grid.css` | 236 | Visualisation grid, chart cards, drag-and-drop states, resize controls | 🟢 Good; no responsive breakpoints for grid |
-| `css/dashboard-layout.css` | 258 | Dashboard structure — sidebar, top bar, content area, Handsontable theme | 🟢 Clean; fixed sidebar on all screen sizes |
+| `css/dashboard-layout.css` | 258 | Dashboard structure — sidebar, top bar, content area, Handsontable light scheme | 🟢 Clean; fixed sidebar on all screen sizes |
 | `index.html` | 292 | Marketing landing page — bento grid, pricing, FAQ, custom illustrations | 🟢 Loads only `core.js` for particles |
 | `js/constants.js` | 12 | Centralized frontend config constants | 🟢 Clean |
 | `script.js` | 16 | Legacy backward-compatibility module loader (unused) | 🟠 Should be deleted |
@@ -467,7 +467,7 @@ graph TD
 | **FAQ section** | Hover-activated FAQ accordion with smooth expand/collapse animation. |
 | **Pricing section** | 3-tier pricing (Basic RM9, Pro RM29, Team RM99) with "Best Value" badge. |
 | **Performance-optimized CSS** | Removed `backdrop-filter: blur()` from scroll-area overlays (input bar, top bar, sidebar) for 60fps scroll. CSS containment on chat messages. Static positioned blobs instead of continuous animations. Specific CSS transitions instead of `transition: all`. Single shared ResizeObserver for all Plotly charts. |
-| **CSS variable `--shadow-color`** | Consistent shadow theming across light and dark modes. |
+| **CSS variable `--shadow-color`** | Consistent shadow styling across the UI. |
 | **Pagination for files & chat history** | `GET /api/files` and `GET /api/chat/history` now support `?page=1&per_page=50` query parameters. Response includes pagination metadata (`page`, `per_page`, `total`, `total_pages`). Shared `_paginate()` helper. Frontend `loadChatHistory()` adapted for reverse-chronological API order. |
 
 ---
@@ -479,7 +479,7 @@ graph TD
 **What's strong:**
 - **Architecture**: Deduplicated multi-phase AI pipeline with intelligent data profiling, per-user DataFrame caching, token-efficient context building, and paginated list endpoints
 - **Security**: Defense-in-depth sandbox (AST + restricted builtins + subprocess + timeout), JWT authentication, per-user data isolation, API rate limiting
-- **UX / Design**: Complete brand identity with custom illustrations, SSE streaming phases, chart annotations, drag-and-drop dashboard, dark/light theme, 60fps scroll performance with CSS containment
+- **UX / Design**: Complete brand identity with custom illustrations, SSE streaming phases, chart annotations, drag-and-drop dashboard, and 60fps scroll performance with CSS containment
 - **Infrastructure**: Supabase integration (Auth + Storage + PostgreSQL), session rehydration, per-user caching, consistent structured logging
 
 **What still needs attention:**

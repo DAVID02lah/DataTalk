@@ -27,10 +27,11 @@
 
 ### Frontend
 - **Vanilla JavaScript** (ES6+) — no frameworks
-- **Plotly.js** — interactive charting
+- **Plotly.js 2.35.0** — interactive charting
 - **Handsontable** — spreadsheet grid component
 - **Marked.js** + **DOMPurify** — safe markdown rendering
-- **SheetJS** — client-side Excel file reading
+- **SheetJS (xlsx)** — client-side Excel file reading
+- **GridStack 10** — dashboard drag-and-drop layout
 
 ### Data Formats
 - `.csv`, `.xlsx`, `.xls`
@@ -102,15 +103,18 @@ Then navigate to `http://localhost:5000` in your web browser.
 ├── js/
 │   ├── core.js            # Global app state, particle animations, view switching
 │   ├── data-chat.js       # File upload, chat messaging, Plotly chart rendering
-│   └── dashboard-ui.js    # Dashboard grid, drag-and-drop, chart pinning
+│   ├── dashboard-ui.js    # Dashboard grid, drag-and-drop, chart pinning
+│   └── constants.js       # Configuration constants (chart heights, timeouts)
 ├── css/
-│   ├── dashboard-layout.css
-│   ├── dashboard-chat.css
-│   ├── dashboard-grid.css
-│   └── dashboard-overlays.css
-├── styles.css             # Landing page styles
-├── dashboard.css          # Dashboard base styles
-├── requirements.txt       # Python dependencies
+│   ├── styles.css         # Landing page styles (global typography, colors, buttons)
+│   ├── dashboard.css      # Dashboard CSS manifest (imports all dashboard modules)
+│   ├── dashboard-layout.css   # Sidebar, navigation, main container layout
+│   ├── dashboard-chat.css     # Chat pane, message bubbles, input styling
+│   ├── dashboard-grid.css     # Handsontable grid customization
+│   ├── dashboard-overlays.css # Modal overlays, dropdowns, tooltips
+│   └── data-dashboard.css     # GridStack dashboard, chart containers
+├── assets/                # Custom illustrated PNG characters (7 files)
+├── requirements.txt       # Python dependencies (pinned versions)
 └── start.bat              # Windows auto-launcher
 ```
 
@@ -126,11 +130,17 @@ Then navigate to `http://localhost:5000` in your web browser.
 | `/api/data-summary/<filename>` | GET | Summary statistics (shape, dtypes, preview) |
 | `/api/suggest-questions` | GET | AI-generated contextual question suggestions |
 | `/api/chat` | POST | Main analysis endpoint (4-phase pipeline) |
-| `/api/chat/history` | GET | Retrieve chat message history |
+| `/api/chat/stream` | POST | SSE streaming analysis (real-time phase updates) |
+| `/api/chat/history` | GET | Retrieve chat message history (paginated) |
 | `/api/chat/clear` | POST | Reset all state and history |
 | `/api/dashboard` | GET/POST | Get or update dashboard configuration |
 | `/api/dashboard/pin` | POST | Pin a chart to the dashboard |
 | `/api/dashboard/remove/<id>` | DELETE | Remove a chart from the dashboard |
+| `/api/dashboard/card-data` | POST | Compute KPI aggregation value (count, sum, avg, etc.) |
+| `/api/auth/signup` | POST | Register new user (Supabase Auth) |
+| `/api/auth/login` | POST | Authenticate user, return JWT tokens |
+| `/api/auth/logout` | POST | Sign out user |
+| `/api/auth/session` | GET | Validate current session, return user profile |
 
 ---
 

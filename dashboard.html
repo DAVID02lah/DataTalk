@@ -10,7 +10,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Inter:wght@400;500;600&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="css/styles.css">
     <!-- Handsontable CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
     <!-- SheetJS -->
@@ -21,7 +21,12 @@
     <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
     <!-- Marked.js for markdown rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+    <!-- Data Dashboard JS / GridStack Styles -->
+    <link rel="stylesheet" href="css/data-dashboard.css">
+    <link href="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack-extra.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack-all.js"></script>
 </head>
 
 <body>
@@ -111,10 +116,6 @@
             <header class="top-bar">
                 <div class="page-title" id="page-title">Chat Analysis</div>
                 <div style="display: flex; align-items: center; gap: 12px;">
-                    <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="App.toggleTheme()"
-                        title="Toggle dark mode">
-                        🌙
-                    </button>
                     <div class="user-profile">
                         <div class="user-avatar">?</div>
                         <span class="user-name">User</span>
@@ -205,38 +206,50 @@
 
                 <!-- =================== VISUALS VIEW =================== -->
                 <div id="view-visuals" class="view-section">
-                    <div class="dashboard-container">
-                        <!-- Dashboard Header -->
-                        <div class="dashboard-header-bar">
-                            <div class="dashboard-title-area">
-                                <h2 class="dashboard-title">Dashboard</h2>
-                                <span class="chart-count-badge" id="dashboard-chart-count">0 charts</span>
+                    <div class="live-dashboard-container">
+                        <!-- Dashboard Toolbar -->
+                        <div class="live-toolbar">
+                            <div class="live-toolbar-left">
+                                <h2 class="live-title">Dashboard</h2>
+                                <span class="live-chart-count" id="dashboard-chart-count">0 charts</span>
                             </div>
-                            <div class="dashboard-controls">
-                                <button class="btn-dash-action" onclick="refreshDashboard()">Refresh</button>
-                                <button class="btn-dash-action btn-dash-danger" onclick="clearAllCharts()">Clear
-                                    All</button>
+                            <div class="live-toolbar-right">
+                                <button class="btn-live-action" onclick="showAddCardModal()">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                        <line x1="12" y1="8" x2="12" y2="16"></line>
+                                    </svg>
+                                    Add Card
+                                </button>
+                                <button class="btn-live-action"
+                                    style="color: #ef4444; border-color: rgba(239,68,68,0.3);"
+                                    onclick="clearAllCharts()">
+                                    Clear All
+                                </button>
                             </div>
                         </div>
 
-                        <!-- Charts Grid -->
-                        <div class="dashboard-grid" id="dashboard-grid"></div>
-
-                        <!-- Empty State -->
-                        <div class="dashboard-empty" id="dashboard-empty" style="display: none;">
-                            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="48" height="48"
-                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-                                stroke-linecap="round" stroke-linejoin="round"
-                                style="opacity: 0.25; margin-bottom: 8px;">
-                                <rect x="3" y="3" width="7" height="7" rx="1" />
-                                <rect x="14" y="3" width="7" height="7" rx="1" />
-                                <rect x="3" y="14" width="7" height="7" rx="1" />
-                                <rect x="14" y="14" width="7" height="7" rx="1" />
-                            </svg>
-                            <h3>No Charts Pinned Yet</h3>
-                            <p>Go to <strong>Chat Analysis</strong>, ask a question that generates a chart, then click
-                                <strong>"Pin to Dashboard"</strong> to add it here.
-                            </p>
+                        <!-- Fixed 16:9 Canvas Wrapper -->
+                        <div class="live-canvas-wrapper" id="dashboard-canvas-wrapper">
+                            <div class="live-canvas" id="dashboard-canvas">
+                                <div class="grid-stack" id="dashboard-grid-stack">
+                                    <!-- GridStack widgets mount here dynamically -->
+                                </div>
+                                <!-- Empty state overlay -->
+                                <div class="live-empty-state" id="dashboard-empty">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="1.5" style="opacity: 0.25;">
+                                        <rect x="3" y="3" width="7" height="7" rx="1" />
+                                        <rect x="14" y="3" width="7" height="7" rx="1" />
+                                        <rect x="3" y="14" width="7" height="7" rx="1" />
+                                        <rect x="14" y="14" width="7" height="7" rx="1" />
+                                    </svg>
+                                    <h4>No Charts Pinned Yet</h4>
+                                    <p>Go to <strong>Chat Analysis</strong>, ask a question that generates a chart, then
+                                        click <strong>"Pin to Dashboard"</strong> to add it here.</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -251,6 +264,97 @@
             <button class="close-fullscreen" onclick="closeFullscreenChart()"
                 aria-label="Close Fullscreen Chart">×</button>
             <div id="fullscreen-chart"></div>
+        </div>
+    </div>
+
+    <!-- Chart Customizer Slide-Out Panel -->
+    <div class="chart-customizer-panel" id="chart-customizer">
+        <div class="customizer-header">
+            <h3 style="margin: 0; font-size: 16px;">Customize Chart</h3>
+            <button class="widget-btn" onclick="closeChartCustomizer()" style="font-size: 18px;">×</button>
+        </div>
+        <div class="customizer-body">
+            <!-- Title -->
+            <div class="customizer-section">
+                <label>Chart Title</label>
+                <input type="text" id="custom-title" oninput="applyCustomTitle()" placeholder="Enter title...">
+            </div>
+            <!-- Colors -->
+            <div class="customizer-section">
+                <label>Trace Colors</label>
+                <div id="custom-color-pickers"></div>
+            </div>
+            <!-- X-Axis -->
+            <div class="customizer-section">
+                <label>X-Axis Label</label>
+                <input type="text" id="custom-xaxis" oninput="applyCustomAxis('x')" placeholder="X-axis label...">
+            </div>
+            <!-- Y-Axis -->
+            <div class="customizer-section">
+                <label>Y-Axis Label</label>
+                <input type="text" id="custom-yaxis" oninput="applyCustomAxis('y')" placeholder="Y-axis label...">
+            </div>
+            <!-- Scale -->
+            <div class="customizer-section">
+                <label>Y-Axis Scale</label>
+                <select id="custom-scale" onchange="applyCustomScale()">
+                    <option value="linear">Linear</option>
+                    <option value="log">Logarithmic</option>
+                </select>
+            </div>
+            <!-- Legend -->
+            <div class="customizer-section">
+                <label>Legend Position</label>
+                <select id="custom-legend" onchange="applyCustomLegend()">
+                    <option value="right">Right</option>
+                    <option value="bottom">Bottom</option>
+                    <option value="top">Top</option>
+                    <option value="none">Hidden</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- KPI Card Add Modal -->
+    <div class="chart-fullscreen-overlay" id="add-card-modal" style="display: none;" role="dialog">
+        <div class="chart-fullscreen-container" style="max-width: 400px; padding: 24px; text-align: left;">
+            <button class="close-fullscreen" onclick="closeAddCardModal()" aria-label="Close Modal">×</button>
+            <h3 style="margin-top: 0; margin-bottom: 16px;">Add Statistic Card</h3>
+            <div style="margin-bottom: 16px;">
+                <label
+                    style="display: block; font-weight: 500; margin-bottom: 6px; color: var(--text-color);">Column</label>
+                <select id="card-column-select"
+                    style="width: 100%; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--chat-bg, #fff); color: var(--text-color); font-size: 14px;">
+                    <option value="">Select a column...</option>
+                </select>
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label
+                    style="display: block; font-weight: 500; margin-bottom: 6px; color: var(--text-color);">Aggregation</label>
+                <select id="card-agg-select"
+                    style="width: 100%; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--chat-bg, #fff); color: var(--text-color); font-size: 14px;">
+                    <option value="count">Count (Unique)</option>
+                    <option value="total">Total Rows</option>
+                    <option value="sum">Sum</option>
+                    <option value="avg">Average</option>
+                    <option value="min">Min</option>
+                    <option value="max">Max</option>
+                    <option value="median">Median</option>
+                    <option value="unique">Unique Values</option>
+                </select>
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; font-weight: 500; margin-bottom: 6px; color: var(--text-color);">Card
+                    Title (optional)</label>
+                <input type="text" id="card-title-input" placeholder="e.g. Total Revenue"
+                    style="width: 100%; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--chat-bg, #fff); color: var(--text-color); font-size: 14px;">
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                <button class="btn-live-action" onclick="closeAddCardModal()">Cancel</button>
+                <button class="btn-live-action btn-live-primary" id="btn-submit-card" onclick="submitAddCard()">Add
+                    Card</button>
+            </div>
+            <div id="card-add-error" style="color: #ef4444; font-size: 13px; margin-top: 12px; display: none;"></div>
         </div>
     </div>
 

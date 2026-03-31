@@ -860,6 +860,54 @@ def remove_chart(chart_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/dashboard/card-data", methods=["POST"])
+@require_auth
+def card_data():
+    """Compute an aggregation value for a KPI card."""
+    data = request.get_json()
+    if not data or "column" not in data:
+        return jsonify({"error": "Missing column parameter"}), 400
+
+    column = data["column"]
+    aggregation = data.get("aggregation", "count")
+
+    state = _get_user_state()
+    filename = state.active_file.get("filename")
+    if not filename:
+        return jsonify({"error": "No active file"}), 400
+
+    try:
+        df = _get_dataframe(filename, user_id=g.user_id, state=state)
+
+        if column not in df.columns:
+            return jsonify({"error": f"Column '{column}' not found"}), 400
+
+        col = df[column]
+        if aggregation == "count":
+            value = int(col.nunique())
+        elif aggregation == "total":
+            value = len(df)
+        elif aggregation == "sum":
+            value = float(col.sum()) if col.dtype.kind in ("i", "f") else str(col.sum())
+        elif aggregation == "avg":
+            value = float(col.mean()) if col.dtype.kind in ("i", "f") else None
+        elif aggregation == "min":
+            value = float(col.min()) if col.dtype.kind in ("i", "f") else str(col.min())
+        elif aggregation == "max":
+            value = float(col.max()) if col.dtype.kind in ("i", "f") else str(col.max())
+        elif aggregation == "median":
+            value = float(col.median()) if col.dtype.kind in ("i", "f") else None
+        elif aggregation == "unique":
+            value = int(col.nunique())
+        else:
+            value = int(col.nunique())
+
+        return jsonify({"success": True, "value": value})
+    except Exception as e:
+        logger.error("Card data computation failed: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
 # ==============================================================
 # Server Startup
 # ==============================================================

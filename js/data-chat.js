@@ -138,26 +138,22 @@ function loadGrid(data) {
             stretchH: "all",
         });
 
-        // Handsontable injects theme CSS at runtime; force its color-scheme to light.
-        patchHandsontableColorScheme(gridContainer);
+        // Handsontable injects runtime CSS; force its color-scheme to light.
+        enforceHandsontableLightScheme(gridContainer);
     }
 }
 
-function patchHandsontableColorScheme(gridContainer) {
+function enforceHandsontableLightScheme(gridContainer) {
     if (!gridContainer) return;
 
-    // Keep computed scheme driven by CSS variable.
-    gridContainer.style.colorScheme = "var(--ht-color-scheme, light)";
+    gridContainer.style.colorScheme = "light";
 
     const styleEls = gridContainer.querySelectorAll("style");
     styleEls.forEach((styleEl) => {
         const css = styleEl.textContent || "";
         if (!css.includes(":where(.ht-theme-main)")) return;
 
-        const patched = css.replace(
-            "color-scheme: light dark;",
-            "color-scheme: var(--ht-color-scheme, light);"
-        );
+        const patched = css.replace(/color-scheme\s*:[^;]+;/g, "color-scheme: light;");
         if (patched !== css) {
             styleEl.textContent = patched;
         }
@@ -396,6 +392,11 @@ async function clearChatHistory() {
         const dataGridContainer = document.getElementById("data-grid-container");
         if (uploadContainer) uploadContainer.style.display = "flex";
         if (dataGridContainer) dataGridContainer.style.display = "none";
+
+        // Clear dashboard widgets
+        if (typeof clearDashboard === 'function') {
+            clearDashboard();
+        }
 
     } catch (e) {
         console.error("Error clearing chat:", e);

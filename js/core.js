@@ -17,6 +17,7 @@ const App = {
         isWaitingForAI: false,      // Prevents double-sends
         chartCounter: 0,            // Counter for unique chart IDs
         dashboardCharts: [],        // Pinned dashboard charts
+        dashboardCards: [],         // KPI stat cards
         draggedChartId: null,       // Currently dragged chart ID
         dashboardLoaded: false,     // Whether dashboard has been loaded
         progressInterval: null,     // Typing indicator interval
@@ -83,49 +84,8 @@ const App = {
         if (initialsEl && user.avatar_initials) {
             initialsEl.textContent = user.avatar_initials;
         }
-    },
-
-    // ============================================================
-    // Theme (Dark / Light Mode)
-    // ============================================================
-
-    /** Apply saved theme or detect system preference. */
-    initTheme() {
-        const saved = localStorage.getItem('dt_theme');
-        if (saved) {
-            document.documentElement.setAttribute('data-theme', saved);
-        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            document.documentElement.setAttribute('data-theme', 'dark');
-        }
-        App.updateThemeIcon();
-    },
-
-    /** Toggle between light and dark mode. */
-    toggleTheme() {
-        const current = document.documentElement.getAttribute('data-theme');
-        const next = current === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', next);
-        localStorage.setItem('dt_theme', next);
-        App.updateThemeIcon();
-
-        // Update particle color if canvas exists
-        if (window.updateParticleTheme) {
-            window.updateParticleTheme(next);
-        }
-    },
-
-    /** Sync the theme toggle button icon. */
-    updateThemeIcon() {
-        const btn = document.getElementById('theme-toggle-btn');
-        if (!btn) return;
-        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        btn.textContent = isDark ? '☀️' : '🌙';
-        btn.title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
     }
 };
-
-// Apply theme immediately to prevent flash of wrong theme
-App.initTheme();
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -170,14 +130,7 @@ if (canvas) {
     particlesArray = [];
 }
 
-let particleColor = document.documentElement.getAttribute('data-theme') === 'dark' ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.5)";
-
-window.updateParticleTheme = function (theme) {
-    particleColor = theme === 'dark' ? "rgba(255, 255, 255, 0.5)" : "rgba(0, 0, 0, 0.5)";
-    if (document.getElementById("particle-canvas")) {
-        initParticles();
-    }
-};
+let particleColor = "rgba(0, 0, 0, 0.5)";
 
 let mouse = {
     x: null,
@@ -428,6 +381,10 @@ function switchView(viewName) {
     // Refresh dashboard when switching to visuals
     if (viewName === "visuals") {
         refreshDashboard();
+        // Resize Plotly charts after GridStack canvas becomes visible
+        if (typeof resizeDashboardOnActivate === 'function') {
+            resizeDashboardOnActivate();
+        }
     }
 }
 
