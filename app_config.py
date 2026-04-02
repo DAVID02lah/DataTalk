@@ -22,6 +22,17 @@ def get_int_env(name, default):
         return default
 
 
+def get_float_env(name, default):
+    """Read a float environment variable safely."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 DEBUG = get_bool_env("FLASK_DEBUG", False)
 PORT = get_int_env("PORT", 5000)
 HTTPS_ENABLED = get_bool_env("HTTPS_ENABLED", False)
@@ -41,7 +52,7 @@ def get_allowed_cors_origins():
     ]
 
 
-MAX_UPLOAD_MB = get_int_env("MAX_UPLOAD_MB", 10)
+MAX_UPLOAD_MB = get_int_env("MAX_UPLOAD_MB", 1)
 MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024
 
 # Magic Numbers extracted from backend execution logic
@@ -52,6 +63,9 @@ EXEC_TIMEOUT = get_int_env("EXEC_TIMEOUT", 60)
 
 # Rate Limiting
 RATE_LIMIT = os.getenv("RATE_LIMIT", "5 per minute")
+
+# Gemini Flash Lite pricing conversion helper.
+USD_TO_MYR_RATE = get_float_env("USD_TO_MYR_RATE", 4.70)
 
 # Pagination
 DEFAULT_PAGE_SIZE = get_int_env("DEFAULT_PAGE_SIZE", 50)

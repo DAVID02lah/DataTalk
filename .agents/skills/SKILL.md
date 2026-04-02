@@ -253,10 +253,15 @@ If code generation/execution fails entirely after all retries, fall back to `gem
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/upload` | Upload CSV/Excel file to Supabase Storage |
-| `GET` | `/api/files` | List uploaded files for current user |
 | `GET` | `/api/data-summary/<filename>` | Get summary stats for a file |
 | `GET` | `/api/data/<filename>` | Get full dataset as JSON (columns + rows) |
 | `GET` | `/api/suggest-questions` | Get 4 AI-generated question suggestions |
+
+### Profile (JWT required — `@require_auth`)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/profile` | Update display name and avatar initials |
 
 ### Chat (JWT required — `@require_auth`)
 

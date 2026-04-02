@@ -9,6 +9,7 @@ Thread-safe via threading.Lock.
 import collections
 import threading
 import time
+from collections import deque
 
 import app_config
 
@@ -49,8 +50,19 @@ class UserState:
     """Per-user runtime state container."""
 
     def __init__(self):
-        self.chat_histories: dict[str, list[dict[str, object]]] = {}
+        self.chat_history: list[dict[str, object]] = []
+        self.chat_sessions: list[dict[str, object]] = []
+        self.active_session_id: str | None = None
         self.active_file: dict[str, str | None] = {"filename": None}
+        self.usage_totals: dict[str, object] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cost_usd": 0.0,
+            "cost_myr": 0.0,
+            "updated_at": None,
+        }
+        self.message_request_times = deque(maxlen=300)
         self.query_cache = QueryCache(max_items=app_config.QUERY_CACHE_SIZE)
         self._file_cache: dict[str, dict] = {}
 

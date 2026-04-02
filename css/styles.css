@@ -591,24 +591,6 @@ main {
     gap: 10px;
 }
 
-.tool-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 8px;
-    border-radius: 50%;
-    color: var(--text-light);
-    transition: background 0.2s, color 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.tool-btn:hover {
-    background: rgba(0, 0, 0, 0.05);
-    color: var(--primary-color);
-}
-
 .send-btn {
     background: var(--primary-color);
     color: white;

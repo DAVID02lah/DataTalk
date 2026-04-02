@@ -22,6 +22,8 @@ const App = {
         dashboardLoaded: false,     // Whether dashboard has been loaded
         progressInterval: null,     // Typing indicator interval
         progressPhaseIndex: 0,      // Current progress phase
+        chatSessions: [],           // Conversation session summaries
+        activeSessionId: null,      // Active conversation session id
     },
 
     /** Return headers object with the Bearer token for authenticated API requests. */
@@ -78,6 +80,9 @@ const App = {
     loadUserProfile(user) {
         const nameEl = document.querySelector('.user-profile .user-name');
         const initialsEl = document.querySelector('.user-profile .user-avatar');
+        if (user && typeof user === 'object') {
+            localStorage.setItem('dt_user', JSON.stringify(user));
+        }
         if (nameEl && user.display_name) {
             nameEl.textContent = user.display_name;
         }
@@ -293,9 +298,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
+    const userProfile = document.querySelector('.user-profile');
+    if (userProfile) {
+        userProfile.style.cursor = 'pointer';
+        userProfile.addEventListener('click', () => {
+            window.location.href = 'profile.html';
+        });
+    }
+
     // --- File Upload (Drag & Drop + Click) ---
     const dropZone = document.getElementById("upload-container");
     const fileInput = document.getElementById("file-input");
+    const browseFileBtn = document.getElementById("browse-file-btn");
     const gridContainer = document.getElementById("data-grid-container");
 
     if (dropZone) {
@@ -325,6 +339,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
+    if (browseFileBtn && fileInput) {
+        browseFileBtn.addEventListener("click", () => {
+            fileInput.click();
+        });
+    }
+
     // --- Chat Input (Enter to send) ---
     const chatInput = document.getElementById("chat-input");
     const chatSendBtn = document.getElementById("send-btn");
@@ -346,11 +366,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
-    // --- Check for existing uploaded files ---
-    checkExistingFiles();
-
-    // --- Load chat history from server ---
-    loadChatHistory();
+    // --- Hydrate file/session/history/usage sidebar state ---
+    if (typeof initializeDashboardSidebarState === "function") {
+        await initializeDashboardSidebarState();
+    } else {
+        if (typeof checkExistingFiles === "function") {
+            checkExistingFiles();
+        }
+        if (typeof loadChatHistory === "function") {
+            loadChatHistory();
+        }
+    }
 });
 
 function preventDefaults(e) {

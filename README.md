@@ -125,7 +125,6 @@ Then navigate to `http://localhost:5000` in your web browser.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/upload` | POST | Upload a CSV/Excel file |
-| `/api/files` | GET | List uploaded files with sizes |
 | `/api/data/<filename>` | GET | Full dataset for grid display |
 | `/api/data-summary/<filename>` | GET | Summary statistics (shape, dtypes, preview) |
 | `/api/suggest-questions` | GET | AI-generated contextual question suggestions |
@@ -141,6 +140,7 @@ Then navigate to `http://localhost:5000` in your web browser.
 | `/api/auth/login` | POST | Authenticate user, return JWT tokens |
 | `/api/auth/logout` | POST | Sign out user |
 | `/api/auth/session` | GET | Validate current session, return user profile |
+| `/api/profile` | POST | Update account display name/profile settings |
 
 ---
 

@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Talk — Profile</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Inter:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        body {
+            min-height: 100vh;
+            margin: 0;
+            background: radial-gradient(circle at 12% 18%, rgba(66, 133, 244, 0.18), transparent 45%),
+                radial-gradient(circle at 88% 82%, rgba(244, 180, 0, 0.16), transparent 48%),
+                var(--background);
+            color: var(--text-color);
+        }
+
+        .profile-shell {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px 16px;
+        }
+
+        .profile-card {
+            width: min(720px, 100%);
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
+            overflow: hidden;
+        }
+
+        .profile-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 22px 24px;
+            border-bottom: 1px solid var(--border-color);
+            background: linear-gradient(90deg, rgba(66, 133, 244, 0.08), rgba(52, 168, 83, 0.06));
+        }
+
+        .profile-title h1 {
+            margin: 0;
+            font-size: 1.4rem;
+            line-height: 1.2;
+        }
+
+        .profile-title p {
+            margin: 6px 0 0 0;
+            color: var(--text-light);
+            font-size: 0.9rem;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-secondary {
+            border: 1px solid var(--border-color);
+            background: #fff;
+            color: var(--text-color);
+            border-radius: 10px;
+            padding: 9px 14px;
+            font-size: 0.88rem;
+            cursor: pointer;
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--primary-color);
+            transform: translateY(-1px);
+        }
+
+        .profile-body {
+            display: grid;
+            grid-template-columns: 170px 1fr;
+            gap: 22px;
+            padding: 24px;
+        }
+
+        .profile-avatar-wrap {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .profile-avatar {
+            width: 102px;
+            height: 102px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.9rem;
+            color: #fff;
+            background: linear-gradient(135deg, #4285f4, #34a853);
+            box-shadow: 0 10px 24px rgba(66, 133, 244, 0.22);
+        }
+
+        .profile-fields {
+            display: grid;
+            gap: 14px;
+        }
+
+        .field-group label {
+            display: block;
+            font-size: 0.82rem;
+            color: var(--text-light);
+            margin-bottom: 6px;
+        }
+
+        .field-group input {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 0.95rem;
+            color: var(--text-color);
+            background: #fff;
+            outline: none;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            font-family: var(--font-family);
+        }
+
+        .field-group input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.12);
+        }
+
+        .field-group input[readonly] {
+            background: var(--surface-secondary);
+            color: var(--text-light);
+            cursor: default;
+        }
+
+        .profile-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 18px 24px 22px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .status-text {
+            min-height: 20px;
+            font-size: 0.84rem;
+        }
+
+        .status-text.error {
+            color: #b42318;
+        }
+
+        .status-text.success {
+            color: #067647;
+        }
+
+        .save-btn {
+            min-width: 130px;
+        }
+
+        @media (max-width: 760px) {
+            .profile-body {
+                grid-template-columns: 1fr;
+            }
+
+            .profile-avatar-wrap {
+                justify-content: flex-start;
+            }
+
+            .profile-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .header-actions {
+                width: 100%;
+                justify-content: flex-end;
+            }
+
+            .profile-footer {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .save-btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="profile-shell">
+        <section class="profile-card" aria-label="Account settings">
+            <header class="profile-header">
+                <div class="profile-title">
+                    <h1>Account Settings</h1>
+                    <p>Manage your basic account profile details.</p>
+                </div>
+                <div class="header-actions">
+                    <button type="button" class="btn-secondary" id="back-btn">Back to Dashboard</button>
+                    <button type="button" class="btn-secondary" id="sign-out-btn">Sign Out</button>
+                </div>
+            </header>
+
+            <div class="profile-body">
+                <div class="profile-avatar-wrap">
+                    <div class="profile-avatar" id="profile-avatar">?</div>
+                </div>
+                <form class="profile-fields" id="profile-form">
+                    <div class="field-group">
+                        <label for="display-name">Display Name</label>
+                        <input type="text" id="display-name" maxlength="80" required>
+                    </div>
+                    <div class="field-group">
+                        <label for="email">Email Address</label>
+                        <input type="email" id="email" readonly>
+                    </div>
+                </form>
+            </div>
+
+            <footer class="profile-footer">
+                <div class="status-text" id="status-text" role="status" aria-live="polite"></div>
+                <button type="submit" form="profile-form" class="btn btn-primary save-btn" id="save-btn">Save Changes</button>
+            </footer>
+        </section>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        function getAuthHeaders(extra = {}) {
+            const token = localStorage.getItem("dt_access_token");
+            return {
+                "Authorization": token ? `Bearer ${token}` : "",
+                ...extra,
+            };
+        }
+
+        function signOut() {
+            const token = localStorage.getItem("dt_access_token");
+            if (token) {
+                fetch(`${API_BASE}/api/auth/logout`, {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                }).catch(() => { });
+            }
+            localStorage.removeItem("dt_access_token");
+            localStorage.removeItem("dt_refresh_token");
+            localStorage.removeItem("dt_user");
+            window.location.href = "login.html";
+        }
+
+        function avatarInitials(nameValue) {
+            const parts = String(nameValue || "").trim().split(/\s+/).filter(Boolean);
+            if (parts.length === 0) return "?";
+            if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+            return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+        }
+
+        function setStatus(message, type = "") {
+            const statusEl = document.getElementById("status-text");
+            if (!statusEl) return;
+            statusEl.className = `status-text ${type}`.trim();
+            statusEl.textContent = message || "";
+        }
+
+        function hydrateProfile(user) {
+            const nameInput = document.getElementById("display-name");
+            const emailInput = document.getElementById("email");
+            const avatar = document.getElementById("profile-avatar");
+
+            const name = user?.display_name || user?.email?.split("@")[0] || "";
+            const initials = user?.avatar_initials || avatarInitials(name);
+
+            if (nameInput) nameInput.value = name;
+            if (emailInput) emailInput.value = user?.email || "";
+            if (avatar) avatar.textContent = initials || "?";
+        }
+
+        async function ensureSession() {
+            const token = localStorage.getItem("dt_access_token");
+            if (!token) {
+                window.location.href = "login.html";
+                return null;
+            }
+
+            const response = await fetch(`${API_BASE}/api/auth/session`, {
+                headers: getAuthHeaders(),
+            });
+            if (!response.ok) {
+                signOut();
+                return null;
+            }
+
+            const data = await response.json().catch(() => ({}));
+            if (!data.valid || !data.user) {
+                signOut();
+                return null;
+            }
+
+            localStorage.setItem("dt_user", JSON.stringify(data.user));
+            return data.user;
+        }
+
+        async function saveProfile(event) {
+            event.preventDefault();
+            const saveBtn = document.getElementById("save-btn");
+            const nameInput = document.getElementById("display-name");
+            const displayName = String(nameInput?.value || "").trim();
+
+            if (!displayName) {
+                setStatus("Display name is required.", "error");
+                return;
+            }
+
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = "Saving...";
+            }
+            setStatus("");
+
+            try {
+                const response = await fetch(`${API_BASE}/api/profile`, {
+                    method: "POST",
+                    headers: getAuthHeaders({ "Content-Type": "application/json" }),
+                    body: JSON.stringify({ display_name: displayName }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.error || data.success === false) {
+                    throw new Error(data.error || "Failed to save profile.");
+                }
+
+                const currentUser = JSON.parse(localStorage.getItem("dt_user") || "{}");
+                const nextUser = {
+                    ...currentUser,
+                    display_name: data.profile?.display_name || displayName,
+                    avatar_initials: data.profile?.avatar_initials || avatarInitials(displayName),
+                };
+                localStorage.setItem("dt_user", JSON.stringify(nextUser));
+                hydrateProfile(nextUser);
+                setStatus("Profile updated successfully.", "success");
+            } catch (error) {
+                setStatus(error.message || "Failed to save profile.", "error");
+            } finally {
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = "Save Changes";
+                }
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", async () => {
+            const backBtn = document.getElementById("back-btn");
+            const signOutBtn = document.getElementById("sign-out-btn");
+            const form = document.getElementById("profile-form");
+            const nameInput = document.getElementById("display-name");
+
+            if (backBtn) {
+                backBtn.addEventListener("click", () => {
+                    window.location.href = "dashboard.html";
+                });
+            }
+            if (signOutBtn) {
+                signOutBtn.addEventListener("click", signOut);
+            }
+            if (form) {
+                form.addEventListener("submit", saveProfile);
+            }
+            if (nameInput) {
+                nameInput.addEventListener("input", () => {
+                    const avatar = document.getElementById("profile-avatar");
+                    if (avatar) {
+                        avatar.textContent = avatarInitials(nameInput.value);
+                    }
+                });
+            }
+
+            try {
+                const user = await ensureSession();
+                if (user) {
+                    hydrateProfile(user);
+                }
+            } catch {
+                signOut();
+            }
+        });
+    </script>
+</body>
+
+</html>

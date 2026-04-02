@@ -19,12 +19,48 @@ def get_dataset_bucket():
     return sb.storage.from_("datasets")
 
 
-def save_uploaded_file(file_storage, user_id=None):
+def _normalize_relative_path(path, allow_empty=False):
+    """Normalize user-scoped storage paths and block traversal."""
+    raw = str(path or "").replace("\\", "/").strip("/")
+    if not raw:
+        if allow_empty:
+            return ""
+        raise ValidationError("Path cannot be empty")
+
+    normalized_parts = []
+    for part in raw.split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            raise ValidationError("Invalid path")
+        cleaned = secure_filename(part)
+        if not cleaned:
+            raise ValidationError("Invalid path segment")
+        normalized_parts.append(cleaned)
+
+    if not normalized_parts and allow_empty:
+        return ""
+    if not normalized_parts:
+        raise ValidationError("Invalid path")
+
+    return "/".join(normalized_parts)
+
+
+def _build_storage_path(relative_path, user_id=None):
+    """Convert a user-relative path into a bucket path."""
+    rel = _normalize_relative_path(relative_path, allow_empty=False)
+    if user_id:
+        root = secure_filename(str(user_id))
+        return f"{root}/{rel}"
+    return rel
+
+
+def save_uploaded_file(file_storage, user_id=None, filename_override=None):
     """
     Save a Flask FileStorage object to Supabase Storage.
-    Returns the filename and the storage path.
+    Returns the relative filename and the storage path.
     """
-    raw_filename = file_storage.filename or ""
+    raw_filename = filename_override or file_storage.filename or ""
     filename = secure_filename(raw_filename)
     if not filename:
         raise ValidationError("Invalid file name.")
@@ -34,9 +70,9 @@ def save_uploaded_file(file_storage, user_id=None):
         raise ValidationError(f"Unsupported file type: {ext}")
 
     bucket = get_dataset_bucket()
-    
-    # Path in Supabase: user_id/filename
-    storage_path = f"{user_id}/{filename}" if user_id else filename
+
+    relative_path = filename
+    storage_path = _build_storage_path(relative_path, user_id=user_id)
     
     # Read file content
     file_content = file_storage.read()
@@ -47,7 +83,7 @@ def save_uploaded_file(file_storage, user_id=None):
     # Reset file pointer if needed elsewhere (unlikely but safe)
     file_storage.seek(0)
     
-    return filename, storage_path
+    return relative_path, storage_path
 
 
 def load_file(filename, user_id=None):
@@ -55,7 +91,8 @@ def load_file(filename, user_id=None):
     Load a CSV or Excel file from Supabase Storage into a pandas DataFrame.
     """
     bucket = get_dataset_bucket()
-    storage_path = f"{user_id}/{filename}" if user_id else filename
+    relative_path = _normalize_relative_path(filename, allow_empty=False)
+    storage_path = _build_storage_path(relative_path, user_id=user_id)
     
     try:
         # Download from Supabase
@@ -64,7 +101,7 @@ def load_file(filename, user_id=None):
         # Load into memory buffer
         buffer = io.BytesIO(response)
         
-        ext = os.path.splitext(filename)[1].lower()
+        ext = os.path.splitext(relative_path)[1].lower()
         if ext == ".csv":
             df = pd.read_csv(buffer)
         elif ext in (".xlsx", ".xls"):
@@ -76,7 +113,7 @@ def load_file(filename, user_id=None):
     except Exception as e:
         if isinstance(e, ValidationError):
             raise
-        raise DatasetNotFoundError(f"Failed to load file '{filename}' from storage: {e}")
+        raise DatasetNotFoundError(f"Failed to load file '{relative_path}' from storage: {e}")
 
 
 def get_summary(df):
@@ -419,30 +456,6 @@ def get_profile_string(profile):
 
     return "\n".join(lines)
 
-
-def list_uploaded_files(user_id=None):
-    """Return a list of filenames from Supabase Storage for the user."""
-    bucket = get_dataset_bucket()
-    folder_path = str(user_id) if user_id else ""
-    
-    try:
-        # List files in the user's folder
-        res = bucket.list(folder_path)
-        files = []
-        for f in res:
-            name = f["name"]
-            if name == ".emptyFolderPlaceholder":
-                continue
-            ext = os.path.splitext(name)[1].lower()
-            if ext in ALLOWED_EXTENSIONS:
-                files.append({
-                    "filename": name,
-                    "size_bytes": f.get("metadata", {}).get("size") or 0,
-                    "updated_at": f.get("updated_at")
-                })
-        return files
-    except Exception:
-        return []
 
 def _to_native(val):
     """Convert numpy/pandas types to native Python types for JSON serialization."""

@@ -1,10 +1,10 @@
 /**
- * css/live-dashboard.css
- * Styles for the Power BI-style Live Dashboard with GridStack.js
+ * css/data-dashboard.css
+ * Styles for the Power BI-style dashboard with GridStack.js
  */
 
 /* Container & Layout */
-.live-dashboard-container {
+.dashboard-workspace-container {
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -13,7 +13,7 @@
 }
 
 /* Toolbar */
-.live-toolbar {
+.dashboard-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -23,21 +23,21 @@
     flex-shrink: 0;
 }
 
-.live-toolbar-left,
-.live-toolbar-right {
+.dashboard-toolbar-left,
+.dashboard-toolbar-right {
     display: flex;
     align-items: center;
     gap: 12px;
 }
 
-.live-title {
+.dashboard-title {
     margin: 0;
     font-size: 16px;
     font-weight: 600;
     color: var(--text-color);
 }
 
-.live-chart-count {
+.dashboard-chart-count-badge {
     background: var(--bg-color);
     padding: 4px 10px;
     border-radius: 12px;
@@ -46,7 +46,7 @@
     color: var(--text-muted);
 }
 
-.live-status-indicator {
+.dashboard-status-indicator {
     font-size: 14px;
     display: flex;
     align-items: center;
@@ -71,7 +71,7 @@
    Power BI-style Fixed 16:9 Canvas
    ============================================ */
 
-.live-canvas-wrapper {
+.dashboard-canvas-wrapper {
     flex: 1;
     overflow: auto;
     display: flex;
@@ -81,7 +81,7 @@
     background: var(--bg-color);
 }
 
-.live-canvas {
+.dashboard-canvas-surface {
     width: 1280px;
     min-width: 1280px;
     min-height: 720px;
@@ -277,7 +277,7 @@
    Empty State
    ============================================ */
 
-.live-empty-state {
+.dashboard-empty-state {
     position: absolute;
     inset: 0;
     text-align: center;
@@ -292,17 +292,17 @@
     z-index: 1;
 }
 
-.live-empty-state.hidden {
+.dashboard-empty-state.hidden {
     display: none;
 }
 
-.live-empty-state h4 {
+.dashboard-empty-state h4 {
     margin: 0;
     font-size: 16px;
     color: var(--text-color);
 }
 
-.live-empty-state p {
+.dashboard-empty-state p {
     margin: 0;
     font-size: 14px;
 }
@@ -311,7 +311,7 @@
    Buttons
    ============================================ */
 
-.btn-live-action {
+.btn-dashboard-action {
     background: var(--surface-color);
     border: 1px solid var(--border-color);
     color: var(--text-color);
@@ -326,23 +326,23 @@
     transition: all 0.2s ease;
 }
 
-.btn-live-action:hover:not(:disabled) {
+.btn-dashboard-action:hover:not(:disabled) {
     background: var(--hover-color);
     border-color: var(--text-muted);
 }
 
-.btn-live-action:disabled {
+.btn-dashboard-action:disabled {
     opacity: 0.6;
     cursor: not-allowed;
 }
 
-.btn-live-primary {
+.btn-dashboard-primary {
     background: #3b82f6;
     border-color: #2563eb;
     color: white;
 }
 
-.btn-live-primary:hover:not(:disabled) {
+.btn-dashboard-primary:hover:not(:disabled) {
     background: #2563eb;
     border-color: #1d4ed8;
 }
@@ -499,7 +499,7 @@
    Dark Theme Adjustments
    ============================================ */
 
-[data-theme="dark"] .live-canvas {
+[data-theme="dark"] .dashboard-canvas-surface {
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 

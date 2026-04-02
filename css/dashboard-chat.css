@@ -281,24 +281,6 @@
     color: var(--text-color);
 }
 
-.chat-input-wrapper .tool-btn {
-    background: none;
-    border: none;
-    color: var(--text-light);
-    cursor: pointer;
-    padding: 6px;
-    border-radius: 6px;
-    transition: background 0.2s, color 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.chat-input-wrapper .tool-btn:hover {
-    background: var(--surface-hover);
-    color: var(--text-color);
-}
-
 .send-btn {
     width: 36px;
     height: 36px;

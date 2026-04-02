@@ -31,6 +31,8 @@ import data_service
 import gemini_service
 import code_executor
 import auth_service
+import chat_session_service
+import usage_service
 from auth_service import require_auth
 from errors import DataTalkError, DatasetNotFoundError, ValidationError, LLMServiceError, CodeExecutionError
 
@@ -69,6 +71,7 @@ ALLOWED_STATIC_FILES = {
     "index.html",
     "dashboard.html",
     "login.html",
+    "profile.html",
     "styles.css",
     "dashboard.css",
 }
@@ -100,13 +103,29 @@ def _log_token_usage(usage, label="LLM interaction"):
                total_tokens=usage.get("total_tokens", 0))
 
 
+def _record_and_log_usage(state, usage, label="LLM interaction"):
+    """Persist token usage to state and emit structured logs."""
+    if not usage:
+        return
+    usage_service.record_token_usage(state, usage, app_config.USD_TO_MYR_RATE)
+    _log_token_usage(usage, label)
+
+
 # ==============================================================
 # Helpers: State
 # ==============================================================
 
 def _get_user_state():
     """Get the per-user state for the current authenticated request."""
-    return session_mgr.get_state(g.user_id)
+    state = session_mgr.get_state(g.user_id)
+    usage_service.ensure_usage_state(state)
+    if not getattr(state, "chat_sessions", None):
+        chat_session_service.ensure_active_session(
+            state,
+            filename=state.active_file.get("filename"),
+            force_new=True,
+        )
+    return state
 
 
 def _get_dataframe(filename, user_id, state):
@@ -145,11 +164,16 @@ def _paginate(items, page=1, per_page=app_config.DEFAULT_PAGE_SIZE):
 def _save_chat_history(user_id, state):
     """Persist chat history to Supabase for the given user."""
     try:
+        payload = chat_session_service.build_persisted_payload(state)
+        active_session = chat_session_service.ensure_active_session(
+            state,
+            filename=state.active_file.get("filename"),
+        )
         sb_service = auth_service.get_supabase_service()
         sb_service.table("chat_sessions").upsert({
             "user_id": user_id,
-            "filename": state.active_file.get("filename"),
-            "history": state.chat_histories,
+            "filename": active_session.get("filename") or state.active_file.get("filename"),
+            "history": payload,
             "updated_at": "now()"
         }, on_conflict="user_id, filename").execute()
     except Exception as e:
@@ -159,6 +183,7 @@ def _save_chat_history(user_id, state):
 def _load_chat_history_for_user(user_id):
     """Load chat history from Supabase for a specific user."""
     state = session_mgr.get_state(user_id)
+    usage_service.ensure_usage_state(state)
     try:
         sb_service = auth_service.get_supabase_service()
         result = sb_service.table("chat_sessions") \
@@ -170,10 +195,106 @@ def _load_chat_history_for_user(user_id):
         if result.data:
             session = result.data[0]
             state.active_file["filename"] = session.get("filename")
-            state.chat_histories = session.get("history", {})
+            chat_session_service.restore_from_persisted_payload(
+                state,
+                session.get("history", []),
+                user_id=user_id,
+                fallback_filename=session.get("filename"),
+            )
             _log_event("active_file_rehydrated", user_id=user_id, filename=session.get("filename"))
+        else:
+            chat_session_service.restore_from_persisted_payload(
+                state,
+                [],
+                user_id=user_id,
+                fallback_filename=state.active_file.get("filename"),
+            )
+        chat_session_service.ensure_active_session(
+            state,
+            filename=state.active_file.get("filename"),
+        )
     except Exception as e:
         logger.error("Chat history load failed from Supabase: %s", e)
+
+
+def _resolve_requested_session_id(state, request_data=None):
+    """Resolve dashboard/chat session id from request payload or query string."""
+    requested = ""
+    if isinstance(request_data, dict):
+        requested = str(request_data.get("session_id") or "").strip()
+    if not requested:
+        requested = str(request.args.get("session_id") or "").strip()
+
+    if requested:
+        active = chat_session_service.set_active_session(state, requested)
+        if not active:
+            raise ValidationError("Invalid session_id")
+        return requested
+
+    active = chat_session_service.ensure_active_session(
+        state,
+        filename=state.active_file.get("filename"),
+    )
+    return active.get("id")
+
+
+def _normalise_dashboard_store(raw_config, session_id):
+    """Normalise dashboard config into a per-session storage format."""
+    if isinstance(raw_config, dict) and isinstance(raw_config.get("sessions"), dict):
+        store = raw_config
+    else:
+        legacy_charts = []
+        legacy_cards = []
+        if isinstance(raw_config, dict):
+            if isinstance(raw_config.get("charts"), list):
+                legacy_charts = raw_config.get("charts")
+            if isinstance(raw_config.get("cards"), list):
+                legacy_cards = raw_config.get("cards")
+        store = {
+            "version": 2,
+            "sessions": {},
+        }
+        if legacy_charts or legacy_cards:
+            store["sessions"][session_id] = {
+                "charts": legacy_charts,
+                "cards": legacy_cards,
+            }
+
+    sessions = store.get("sessions")
+    if not isinstance(sessions, dict):
+        sessions = {}
+        store["sessions"] = sessions
+
+    for sid, payload in list(sessions.items()):
+        if not isinstance(payload, dict):
+            sessions[sid] = {"charts": [], "cards": []}
+            continue
+        charts = payload.get("charts")
+        cards = payload.get("cards")
+        payload["charts"] = charts if isinstance(charts, list) else []
+        payload["cards"] = cards if isinstance(cards, list) else []
+
+    sessions.setdefault(session_id, {"charts": [], "cards": []})
+    store["version"] = 2
+    return store
+
+
+def _load_dashboard_store(user_id, session_id):
+    """Load and normalise dashboard storage config for a user."""
+    sb_service = auth_service.get_supabase_service()
+    result = sb_service.table("dashboard_configs").select("config").eq("user_id", user_id).execute()
+    raw_config = result.data[0]["config"] if (result.data and len(result.data) > 0) else {}
+    return _normalise_dashboard_store(raw_config, session_id)
+
+
+def _save_dashboard_store(user_id, config):
+    """Persist a normalised dashboard config for a user."""
+    sb_service = auth_service.get_supabase_service()
+    sb_service.table("dashboard_configs").upsert({
+        "user_id": user_id,
+        "config": config,
+        "updated_at": "now()",
+    }, on_conflict="user_id").execute()
 
 
 def _error_response(message, status_code=500, error_type="server_error"):
@@ -222,7 +343,12 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
         yield ("phase", {"phase": "loading", "message": "Loading dataset..."})
         df = _get_dataframe(filename, user_id=user_id, state=state)
 
-        history = state.chat_histories.get(user_id, [])
+        active_session = chat_session_service.ensure_active_session(state, filename=filename)
+        history = active_session.get("messages", [])
+        if not isinstance(history, list):
+            history = []
+        active_session["messages"] = history
+        state.chat_history = history
 
         # --- Build context (cached per file) ---
         schema_context_lean = state.get_cached(filename, "schema_lean")
@@ -243,7 +369,7 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
         try:
             _log_event("extraction_started")
             extraction_code, usage = gemini_service.generate_data_extraction_code(message, schema_context_lean)
-            _log_token_usage(usage, "Extraction")
+            _record_and_log_usage(state, usage, "Extraction")
             if extraction_code:
                 extracted_data = code_executor.execute_extraction_code(extraction_code, df)
                 if isinstance(extracted_data, dict) and not extracted_data.get("error"):
@@ -267,7 +393,7 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
         generated_code, usage = gemini_service.generate_analysis_code(
             message, schema_context_full, history_capped, profile_context, extracted_data_context
         )
-        _log_token_usage(usage, "Code Gen")
+        _record_and_log_usage(state, usage, "Code Gen")
 
         if generated_code:
             MAX_RETRIES = app_config.MAX_RETRIES
@@ -292,7 +418,7 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
                     interpretation, usage = gemini_service.interpret_results(
                         message, schema_context_full, exec_result, history_capped
                     )
-                    _log_token_usage(usage, "Interpret")
+                    _record_and_log_usage(state, usage, "Interpret")
                     if interpretation:
                         result["text"] = interpretation
                         _log_event("interpret_succeeded")
@@ -311,7 +437,7 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
                                 message, schema_context_full, code_to_run, error_msg,
                                 profile_context, extracted_data_context
                             )
-                            _log_token_usage(usage, "Retry")
+                            _record_and_log_usage(state, usage, "Retry")
                             if last_code:
                                 _log_event("retry_code_generated", chars=len(last_code))
                             else:
@@ -329,7 +455,7 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
             _log_event("fallback_analysis_started")
             data_context = data_service.get_context_string(df, max_rows=5)
             result = gemini_service.analyse_data(message, data_context, history_capped)
-            _log_token_usage(result.get("usage"), "Fallback Text Analysis")
+            _record_and_log_usage(state, result.get("usage"), "Fallback Text Analysis")
             if result.get("error"):
                 yield ("error", {
                     "error": True,
@@ -345,15 +471,7 @@ def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
         state.query_cache.set(cache_key, result)
 
         # Update chat history
-        history.append({"role": "user", "text": message, "chart": None, "table": None, "stats": None})
-        history.append({
-            "role": "model",
-            "text": result["text"],
-            "chart": result.get("chart"),
-            "table": result.get("table"),
-            "stats": result.get("stats"),
-        })
-        state.chat_histories[user_id] = history
+        chat_session_service.append_exchange(state, message, result)
         _save_chat_history(user_id=user_id, state=state)
 
         yield ("result", result)
@@ -476,7 +594,7 @@ def api_logout():
 def api_session():
     """Validate the current session and return user info."""
     state = _get_user_state()
-    if not state.chat_histories and not state.active_file.get("filename"):
+    if not state.chat_sessions and not state.active_file.get("filename"):
         _load_chat_history_for_user(g.user_id)
 
     profile = auth_service.get_profile(g.user_id)
@@ -498,8 +616,21 @@ def api_session():
     })
 
 
+@app.route("/api/profile", methods=["POST"])
+@require_auth
+def update_profile():
+    """Update account profile settings."""
+    data = request.get_json(silent=True) or {}
+    display_name = (data.get("display_name") or "").strip()
+    if not display_name:
+        raise ValidationError("Display name is required")
+
+    profile = auth_service.update_profile(g.user_id, display_name)
+    return jsonify({"success": True, "profile": profile})
+
+
 # ==============================================================
-# Routes: File Management
+# Routes: File Upload & Dataset Access
 # ==============================================================
 
 @app.route("/api/upload", methods=["POST"])
@@ -524,53 +655,46 @@ def upload_file():
     summary = data_service.get_summary(df)
     state.active_file["filename"] = filename
 
-    state.chat_histories.clear()
     state.query_cache.clear()
     state.clear_file_cache()
     state.set_cached(filename, "df", df)
+    chat_session_service.ensure_active_session(state, filename=filename, force_new=True)
+    _save_chat_history(user_id=g.user_id, state=state)
 
     _log_event("file_uploaded", user_id=g.user_id, filename=filename,
                 rows=summary["shape"]["rows"], cols=summary["shape"]["columns"])
 
-    return jsonify({"success": True, "filename": filename, "summary": summary})
-
-
-@app.route("/api/files", methods=["GET"])
-@require_auth
-def list_files():
-    """List uploaded files for the current user with pagination."""
-    files = data_service.list_uploaded_files(user_id=g.user_id)
-    state = _get_user_state()
-
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", app_config.DEFAULT_PAGE_SIZE, type=int)
-    result = _paginate(files, page, per_page)
-
     return jsonify({
-        "files": result["items"],
-        "active": state.active_file["filename"],
-        "page": result["page"],
-        "per_page": result["per_page"],
-        "total": result["total"],
-        "total_pages": result["total_pages"],
+        "success": True,
+        "filename": filename,
+        "path": filename,
+        "summary": summary,
     })
 
 
-@app.route("/api/data-summary/<filename>", methods=["GET"])
+@app.route("/api/data-summary/<path:filename>", methods=["GET"])
 @require_auth
 def data_summary(filename):
     """Get summary stats for a specific uploaded file."""
     state = _get_user_state()
+    state.active_file["filename"] = filename
+    active_session = chat_session_service.ensure_active_session(state, filename=filename)
+    if not active_session.get("filename"):
+        active_session["filename"] = filename
     df = _get_dataframe(filename, user_id=g.user_id, state=state)
     summary = data_service.get_summary(df)
     return jsonify({"filename": filename, "summary": summary})
 
 
-@app.route("/api/data/<filename>", methods=["GET"])
+@app.route("/api/data/<path:filename>", methods=["GET"])
 @require_auth
 def get_full_data(filename):
     """Get the full dataset for the data connector."""
     state = _get_user_state()
+    state.active_file["filename"] = filename
+    active_session = chat_session_service.ensure_active_session(state, filename=filename)
+    if not active_session.get("filename"):
+        active_session["filename"] = filename
     df = _get_dataframe(filename, user_id=g.user_id, state=state)
     data = [df.columns.tolist()] + df.fillna("").values.tolist()
     return jsonify({"filename": filename, "data": data})
@@ -613,7 +737,7 @@ Return ONLY a JSON array of 4 strings, no other text. Example:
                 "output_tokens": getattr(usage_metadata, "candidates_token_count", 0) or 0,
                 "total_tokens": getattr(usage_metadata, "total_token_count", 0) or 0,
             }
-        _log_token_usage(usage_dict, "Suggest Questions")
+        _record_and_log_usage(state, usage_dict, "Suggest Questions")
 
         text_raw = getattr(response, "text", "")
         text = text_raw.strip() if isinstance(text_raw, str) else ""
@@ -641,9 +765,23 @@ def _parse_chat_request():
         return jsonify({"error": "No message provided"}), 400
 
     user_id = g.user_id
-    state = session_mgr.get_state(user_id)
+    state = _get_user_state()
+    requested_session_id = (data.get("session_id") or "").strip()
+    if requested_session_id:
+        activated = chat_session_service.set_active_session(state, requested_session_id)
+        if not activated:
+            return _error_response("Chat session not found", status_code=404, error_type="session_not_found")
+
     message = data["message"]
     filename = data.get("filename") or state.active_file.get("filename")
+    active_session = chat_session_service.ensure_active_session(state, filename=filename)
+    if not filename:
+        filename = active_session.get("filename")
+    if filename:
+        state.active_file["filename"] = filename
+        if not active_session.get("filename"):
+            active_session["filename"] = filename
+
     skip_cache = data.get("skip_cache", False)
 
     if not filename:
@@ -669,9 +807,11 @@ def chat():
     if isinstance(parsed, tuple) and len(parsed) == 2:
         return parsed  # Error response
     message, filename, user_id, state, skip_cache = parsed
+    usage_service.record_message_request(state, app_config.RATE_LIMIT)
 
     for event_type, payload in _run_analysis_pipeline(message, filename, user_id, state, skip_cache):
         if event_type == "result":
+            payload["session_id"] = state.active_session_id
             return jsonify(payload)
         if event_type == "error":
             status = payload.get("status_code", 500)
@@ -694,9 +834,12 @@ def chat_stream():
     if isinstance(parsed, tuple) and len(parsed) == 2:
         return parsed  # Error response
     message, filename, user_id, state, skip_cache = parsed
+    usage_service.record_message_request(state, app_config.RATE_LIMIT)
 
     def generate():
         for event_type, payload in _run_analysis_pipeline(message, filename, user_id, state, skip_cache):
+            if event_type == "result":
+                payload["session_id"] = state.active_session_id
             yield _sse_event(event_type, payload)
         yield _sse_event("done", {})
 
@@ -715,12 +858,12 @@ def get_chat_history():
     Returns most recent messages first; page 1 = latest messages.
     """
     state = _get_user_state()
-    history = state.chat_histories.get(g.user_id, [])
+    history = chat_session_service.get_active_messages(state)
 
     if not history:
         _load_chat_history_for_user(g.user_id)
         state = _get_user_state()
-        history = state.chat_histories.get(g.user_id, [])
+        history = chat_session_service.get_active_messages(state)
 
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", app_config.DEFAULT_PAGE_SIZE, type=int)
@@ -729,6 +872,7 @@ def get_chat_history():
     result = _paginate(reversed_history, page, per_page)
 
     return jsonify({
+        "session_id": state.active_session_id,
         "history": result["items"],
         "page": result["page"],
         "per_page": result["per_page"],
@@ -737,12 +881,110 @@ def get_chat_history():
     })
 
 
+@app.route("/api/chat/sessions", methods=["GET"])
+@require_auth
+def list_chat_sessions():
+    """List all saved chat sessions for the current user."""
+    state = _get_user_state()
+    should_rehydrate = not state.chat_sessions
+    if not should_rehydrate and len(state.chat_sessions) == 1:
+        only = state.chat_sessions[0]
+        only_messages = only.get("messages") if isinstance(only, dict) else []
+        only_title = (only.get("title") or "").strip() if isinstance(only, dict) else ""
+        if not only_messages and only_title in {"", "New Conversation"}:
+            should_rehydrate = True
+
+    if should_rehydrate:
+        _load_chat_history_for_user(g.user_id)
+        state = _get_user_state()
+
+    return jsonify({
+        "active_session_id": state.active_session_id,
+        "sessions": chat_session_service.list_session_summaries(state),
+    })
+
+
+@app.route("/api/chat/sessions/new", methods=["POST"])
+@require_auth
+def create_chat_session():
+    """Create a new chat session and set it active."""
+    state = _get_user_state()
+    data = request.get_json(silent=True) or {}
+    requested_filename = data.get("filename") or state.active_file.get("filename")
+    title = (data.get("title") or "").strip()[:80] or None
+
+    session = chat_session_service.create_session(filename=requested_filename, title=title)
+    state.chat_sessions.insert(0, session)
+    state.active_session_id = session["id"]
+    state.chat_history = session["messages"]
+
+    _save_chat_history(user_id=g.user_id, state=state)
+    return jsonify({"success": True, "session": session})
+
+
+@app.route("/api/chat/sessions/<session_id>/activate", methods=["POST"])
+@require_auth
+def activate_chat_session(session_id):
+    """Activate an existing chat session."""
+    state = _get_user_state()
+    session = chat_session_service.set_active_session(state, session_id)
+    if not session:
+        return _error_response("Chat session not found", status_code=404, error_type="session_not_found")
+
+    if session.get("filename"):
+        state.active_file["filename"] = session.get("filename")
+
+    _save_chat_history(user_id=g.user_id, state=state)
+    return jsonify({"success": True, "active_session_id": session_id})
+
+
+@app.route("/api/chat/sessions/<session_id>", methods=["DELETE"])
+@require_auth
+def delete_chat_session(session_id):
+    """Delete one chat session while preserving others."""
+    state = _get_user_state()
+    deleted = chat_session_service.delete_session(state, session_id)
+    if not deleted:
+        return _error_response("Chat session not found", status_code=404, error_type="session_not_found")
+
+    if state.active_session_id:
+        active = chat_session_service.set_active_session(state, state.active_session_id)
+        if active and active.get("filename"):
+            state.active_file["filename"] = active.get("filename")
+    else:
+        state.active_file["filename"] = None
+
+    _save_chat_history(user_id=g.user_id, state=state)
+    return jsonify({"success": True, "active_session_id": state.active_session_id})
+
+
+@app.route("/api/usage/summary", methods=["GET"])
+@require_auth
+def get_usage_summary():
+    """Return token/cost totals and remaining request budget for sidebar indicators."""
+    state = _get_user_state()
+    return jsonify(usage_service.get_usage_summary(state, app_config.RATE_LIMIT, app_config.USD_TO_MYR_RATE))
+
+
 @app.route("/api/chat/clear", methods=["POST"])
 @require_auth
 def clear_chat():
     """Clear chat history and reset active file."""
     state = _get_user_state()
-    state.chat_histories.clear()
+    state.chat_history = []
+    state.chat_sessions = []
+    state.active_session_id = None
+    usage_service.ensure_usage_state(state)
+    state.usage_totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd": 0.0,
+        "cost_myr": 0.0,
+        "updated_at": None,
+    }
+    state.message_request_times.clear()
+    state.query_cache.clear()
     state.active_file["filename"] = None
     state.clear_file_cache()
     try:
@@ -750,6 +992,14 @@ def clear_chat():
         sb_service.table("chat_sessions").delete().eq("user_id", g.user_id).execute()
     except Exception as e:
         logger.error("Chat history clear failed from Supabase: %s", e)
+
+    # Keep dashboard visuals aligned with clear-chat behavior.
+    try:
+        sb_service = auth_service.get_supabase_service()
+        sb_service.table("dashboard_configs").delete().eq("user_id", g.user_id).execute()
+    except Exception as e:
+        logger.error("Dashboard clear failed from Supabase during chat clear: %s", e)
+
     return jsonify({"success": True})
 
 
@@ -760,33 +1010,48 @@ def clear_chat():
 @app.route("/api/dashboard", methods=["GET"])
 @require_auth
 def get_dashboard():
-    """Get the saved dashboard configuration from Supabase."""
+    """Get the saved dashboard configuration for the active conversation session."""
+    state = _get_user_state()
     try:
-        sb_service = auth_service.get_supabase_service()
-        result = sb_service.table("dashboard_configs").select("config").eq("user_id", g.user_id).execute()
-        if result.data and len(result.data) > 0:
-            return jsonify(result.data[0]["config"])
-        return jsonify({"charts": []})
-    except Exception:
-        return jsonify({"charts": []})
+        session_id = _resolve_requested_session_id(state)
+        config = _load_dashboard_store(g.user_id, session_id)
+        session_config = config.get("sessions", {}).get(session_id) or {"charts": [], "cards": []}
+        return jsonify({
+            "session_id": session_id,
+            "charts": session_config.get("charts", []),
+            "cards": session_config.get("cards", []),
+        })
+    except ValidationError:
+        raise
+    except Exception as e:
+        logger.error("Dashboard fetch failed: %s", e)
+        return jsonify({"session_id": state.active_session_id, "charts": [], "cards": []})
 
 
 @app.route("/api/dashboard", methods=["POST"])
 @require_auth
 def save_dashboard():
-    """Save dashboard configuration to Supabase."""
-    data = request.get_json()
+    """Save dashboard configuration to Supabase for one session."""
+    data = request.get_json(silent=True)
     if not data:
         raise ValidationError("No data provided")
 
+    charts = data.get("charts", [])
+    cards = data.get("cards", [])
+    if not isinstance(charts, list) or not isinstance(cards, list):
+        raise ValidationError("Invalid dashboard payload")
+
+    state = _get_user_state()
+    session_id = _resolve_requested_session_id(state, data)
+
     try:
-        sb_service = auth_service.get_supabase_service()
-        sb_service.table("dashboard_configs").upsert({
-            "user_id": g.user_id,
-            "config": data,
-            "updated_at": "now()"
-        }, on_conflict="user_id").execute()
-        return jsonify({"success": True})
+        config = _load_dashboard_store(g.user_id, session_id)
+        config.setdefault("sessions", {})[session_id] = {
+            "charts": charts,
+            "cards": cards,
+        }
+        _save_dashboard_store(g.user_id, config)
+        return jsonify({"success": True, "session_id": session_id})
     except Exception as e:
         logger.error("Dashboard save failed to Supabase: %s", e)
         raise DataTalkError(str(e))
@@ -795,18 +1060,18 @@ def save_dashboard():
 @app.route("/api/dashboard/pin", methods=["POST"])
 @require_auth
 def pin_chart():
-    """Pin a single chart to the dashboard in Supabase."""
-    data = request.get_json()
+    """Pin a single chart to the dashboard for the active session."""
+    data = request.get_json(silent=True)
     if not data or "chart" not in data:
         return jsonify({"error": "No chart data provided"}), 400
 
+    state = _get_user_state()
+    session_id = _resolve_requested_session_id(state, data)
+
     try:
-        sb_service = auth_service.get_supabase_service()
-
-        result = sb_service.table("dashboard_configs").select("config").eq("user_id", g.user_id).execute()
-        config = result.data[0]["config"] if (result.data and len(result.data) > 0) else {"charts": []}
-
-        charts_list = config.get("charts", [])
+        config = _load_dashboard_store(g.user_id, session_id)
+        session_config = config.setdefault("sessions", {}).setdefault(session_id, {"charts": [], "cards": []})
+        charts_list = session_config.get("charts", [])
         if not isinstance(charts_list, list):
             charts_list = []
 
@@ -818,16 +1083,15 @@ def pin_chart():
             "colSpan": 1
         }
         charts_list.append(new_chart)
-        config["charts"] = charts_list
+        session_config["charts"] = charts_list
+        config["sessions"][session_id] = session_config
 
-        sb_service.table("dashboard_configs").upsert({
-            "user_id": g.user_id,
-            "config": config,
-            "updated_at": "now()"
-        }, on_conflict="user_id").execute()
+        _save_dashboard_store(g.user_id, config)
 
-        return jsonify({"success": True, "chart_id": new_chart["id"]})
+        return jsonify({"success": True, "chart_id": new_chart["id"], "session_id": session_id})
 
+    except ValidationError:
+        raise
     except Exception as e:
         logger.error("Chart pin failed: %s", e)
         return jsonify({"error": str(e)}), 500
@@ -836,25 +1100,21 @@ def pin_chart():
 @app.route("/api/dashboard/remove/<chart_id>", methods=["DELETE"])
 @require_auth
 def remove_chart(chart_id):
-    """Remove a chart from the dashboard in Supabase."""
+    """Remove a chart from the active session dashboard."""
+    state = _get_user_state()
     try:
-        sb_service = auth_service.get_supabase_service()
+        session_id = _resolve_requested_session_id(state)
+        config = _load_dashboard_store(g.user_id, session_id)
+        session_config = config.setdefault("sessions", {}).setdefault(session_id, {"charts": [], "cards": []})
+        session_config["charts"] = [c for c in session_config.get("charts", []) if c.get("id") != chart_id]
+        config["sessions"][session_id] = session_config
 
-        result = sb_service.table("dashboard_configs").select("config").eq("user_id", g.user_id).execute()
-        if not result.data or len(result.data) == 0:
-            return jsonify({"error": "No dashboard config found"}), 404
+        _save_dashboard_store(g.user_id, config)
 
-        config = result.data[0]["config"]
-        config["charts"] = [c for c in config.get("charts", []) if c.get("id") != chart_id]
+        return jsonify({"success": True, "session_id": session_id})
 
-        sb_service.table("dashboard_configs").upsert({
-            "user_id": g.user_id,
-            "config": config,
-            "updated_at": "now()"
-        }, on_conflict="user_id").execute()
-
-        return jsonify({"success": True})
-
+    except ValidationError:
+        raise
     except Exception as e:
         logger.error("Chart removal failed: %s", e)
         return jsonify({"error": str(e)}), 500

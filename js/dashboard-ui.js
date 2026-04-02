@@ -2,6 +2,17 @@
 // Dashboard Pinning
 // ============================================================
 
+function getDashboardSessionId() {
+    return App.state.activeSessionId || "";
+}
+
+function withDashboardSession(url) {
+    const sessionId = getDashboardSessionId();
+    if (!sessionId) return url;
+    const glue = url.includes("?") ? "&" : "?";
+    return `${url}${glue}session_id=${encodeURIComponent(sessionId)}`;
+}
+
 async function pinChart(chartId, title) {
     const chartDiv = document.getElementById(chartId);
     if (!chartDiv) return;
@@ -20,6 +31,7 @@ async function pinChart(chartId, title) {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
+                session_id: getDashboardSessionId(),
                 title: title || "Untitled Chart",
                 chart: {
                     data: plotlyData,
@@ -207,6 +219,49 @@ let dashboardLayoutSaveDebounce = null; // Debounce layout saves
 let dashboardResizeDebounce = null;     // Debounce Plotly resize
 let activeCustomizerChartId = null;     // Currently customizing chart
 
+function removeAllDashboardWidgets() {
+    if (!dashboardGrid) return;
+    try {
+        // removeDOM=true prevents stale/duplicate widget nodes and duplicate chart IDs.
+        dashboardGrid.removeAll(true);
+    } catch (e) {
+        console.warn('Failed to fully remove dashboard widgets:', e);
+    }
+}
+
+function resizePlotlyElement(plotEl) {
+    if (!plotEl || typeof Plotly === 'undefined' || !plotEl.data) return;
+    try {
+        Plotly.Plots.resize(plotEl);
+    } catch (e) {
+        console.warn('Failed to resize Plotly chart:', e);
+    }
+}
+
+function schedulePlotlyStabilizeResize(plotEl, delays = [120, 260, 450, 700]) {
+    delays.forEach((delay) => {
+        setTimeout(() => {
+            if (!plotEl || !plotEl.isConnected) return;
+            const parent = plotEl.parentElement;
+            if (!parent || parent.clientWidth <= 0 || parent.clientHeight <= 0) return;
+            resizePlotlyElement(plotEl);
+        }, delay);
+    });
+}
+
+function scheduleDashboardResizeSweep(delays = [140, 320, 620]) {
+    delays.forEach((delay) => {
+        setTimeout(() => {
+            if (!dashboardGrid) return;
+            const gridItems = dashboardGrid.getGridItems();
+            gridItems.forEach(item => {
+                const plotEls = item.querySelectorAll('.js-plotly-plot');
+                plotEls.forEach(resizePlotlyElement);
+            });
+        }, delay);
+    });
+}
+
 /**
  * Initialize the GridStack instance for the pinned-chart dashboard.
  */
@@ -228,6 +283,11 @@ function initDashboardGridStack() {
             animate: true,           // Smooth transitions
             removable: false,        // Don't allow drag-out removal
             maxRow: 12,              // Cap at 12 rows (720px)
+            draggable: {
+                handle: '.widget-header',
+                cancel: '.widget-btn, .widget-btn *, .ui-resizable-handle',
+                scroll: false,
+            },
             resizable: {
                 handles: 'e, se, s, sw, w'  // Resize from edges
             },
@@ -248,15 +308,7 @@ function initDashboardGridStack() {
             clearTimeout(dashboardResizeDebounce);
             dashboardResizeDebounce = setTimeout(() => {
                 const plotEls = el.querySelectorAll('.js-plotly-plot');
-                plotEls.forEach(plotEl => {
-                    if (plotEl && typeof Plotly !== 'undefined' && plotEl.data) {
-                        try {
-                            Plotly.Plots.resize(plotEl);
-                        } catch (e) {
-                            console.warn('Failed to resize Plotly chart:', e);
-                        }
-                    }
-                });
+                plotEls.forEach(resizePlotlyElement);
             }, 200);
         });
 
@@ -273,7 +325,7 @@ function initDashboardGridStack() {
 
 async function refreshDashboard() {
     try {
-        const response = await fetch(`${App.API_BASE}/api/dashboard`, {
+        const response = await fetch(withDashboardSession(`${App.API_BASE}/api/dashboard`), {
             headers: App.getAuthHeaders()
         });
         const data = await response.json();
@@ -313,17 +365,13 @@ function renderDashboardGrid() {
     // Empty state
     if (totalWidgets === 0) {
         if (emptyEl) emptyEl.classList.remove("hidden");
-        try { dashboardGrid.removeAll(false); } catch (e) { }
+        removeAllDashboardWidgets();
         return;
     }
     if (emptyEl) emptyEl.classList.add("hidden");
 
     // Clear existing widgets safely
-    try {
-        dashboardGrid.removeAll(false);
-    } catch (e) {
-        console.warn('Failed to clear grid:', e);
-    }
+    removeAllDashboardWidgets();
 
     // Sort by position
     const sorted = [...charts].sort((a, b) => (a.position || 0) - (b.position || 0));
@@ -361,6 +409,9 @@ function renderDashboardGrid() {
 
         addDashboardCardWidget(card, widgetId, layoutOverrides);
     });
+
+    // GridStack can settle dimensions asynchronously; run follow-up resize passes.
+    scheduleDashboardResizeSweep();
 }
 
 /**
@@ -392,8 +443,9 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
         </div>
     `;
 
+    let widgetEl = null;
     try {
-        dashboardGrid.addWidget({
+        widgetEl = dashboardGrid.addWidget({
             x: layoutOverrides.x,
             y: layoutOverrides.y,
             w: layoutOverrides.w,
@@ -409,10 +461,23 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
     // Mount Plotly after DOM insertion
     if (hasChart) {
         requestAnimationFrame(() => {
-            const plotEl = document.getElementById(plotId);
+            const plotEl = widgetEl
+                ? widgetEl.querySelector(`#${plotId}`)
+                : document.getElementById(plotId);
             if (plotEl && typeof Plotly !== 'undefined') {
                 try {
-                    mountPlotlyChart(plotId, chartData.chart);
+                    mountPlotlyChart(plotId, chartData.chart, {
+                        stripTitle: true,
+                        layoutOverrides: {
+                            width: undefined,
+                            height: undefined,
+                            margin: { l: 50, r: 30, t: 30, b: 50 },
+                        },
+                        plotConfigOverrides: {
+                            responsive: true,
+                        },
+                    });
+                    schedulePlotlyStabilizeResize(plotEl);
                 } catch (e) {
                     console.error('Failed to mount Plotly chart:', e);
                     plotEl.innerHTML = '<div style="color: #ea4335; padding: 20px;">Error rendering chart</div>';
@@ -420,37 +485,6 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
             }
         });
     }
-}
-
-/**
- * mountPlotlyChart — renders Plotly JSON into a DOM element.
- * (Shared utility for dashboard widgets)
- */
-function mountPlotlyChart(chartElementId, chartJson) {
-    if (!chartElementId || !chartJson) return;
-    setTimeout(() => {
-        try {
-            const layout = {
-                ...(chartJson.layout || {}),
-                template: "plotly_white",
-                font: { family: "Inter, sans-serif" },
-                autosize: true,
-                width: undefined,
-                height: undefined,
-                title: "",
-                margin: { l: 50, r: 30, t: 30, b: 50 },
-            };
-            Plotly.newPlot(chartElementId, chartJson.data, layout, {
-                responsive: true,
-                displayModeBar: true,
-                modeBarButtonsToRemove: ["lasso2d", "select2d"],
-            });
-        } catch (e) {
-            console.error("Plotly render error:", e);
-            const el = document.getElementById(chartElementId);
-            if (el) el.innerHTML = '<p style="color: #ea4335;">Error rendering chart</p>';
-        }
-    }, CONFIG.PLOTLY_RENDER_TIMEOUT);
 }
 
 // ============================================================
@@ -493,6 +527,7 @@ async function saveDashboardToBackend() {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
+                session_id: getDashboardSessionId(),
                 charts: App.state.dashboardCharts || [],
                 cards: App.state.dashboardCards || [],
             }),
@@ -515,18 +550,12 @@ function resizeDashboardOnActivate() {
         if (gridItems && gridItems.length > 0) {
             gridItems.forEach(item => {
                 const plotEls = item.querySelectorAll('.js-plotly-plot');
-                plotEls.forEach(plotEl => {
-                    if (plotEl && plotEl.data && typeof Plotly !== 'undefined') {
-                        try {
-                            Plotly.Plots.resize(plotEl);
-                        } catch (e) {
-                            console.warn('Failed to resize chart on tab switch:', e);
-                        }
-                    }
-                });
+                plotEls.forEach(resizePlotlyElement);
             });
         }
     }, 200);
+
+    scheduleDashboardResizeSweep([320, 620]);
 }
 
 // ============================================================
@@ -535,18 +564,18 @@ function resizeDashboardOnActivate() {
 
 async function removeDashChart(chartId) {
     try {
-        const resp = await fetch(`${App.API_BASE}/api/dashboard/remove/${chartId}`, {
+        const resp = await fetch(withDashboardSession(`${App.API_BASE}/api/dashboard/remove/${chartId}`), {
             method: "DELETE",
             headers: App.getAuthHeaders()
         });
-        const data = await resp.json();
-        if (data.success) {
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.success) {
             refreshDashboard();
         } else {
-            alert("Failed to remove chart: " + (data.error || "Unknown error"));
+            showAppError("Failed to remove chart: " + (data.error || "Unknown error"));
         }
     } catch (e) {
-        alert("Error removing chart.");
+        showAppError("Error removing chart.");
         console.error(e);
     }
 }
@@ -566,14 +595,22 @@ function downloadDashChart(plotId) {
 async function clearAllCharts() {
     if (!confirm("Remove all widgets from the dashboard?")) return;
     try {
-        await fetch(`${App.API_BASE}/api/dashboard`, {
+        const resp = await fetch(`${App.API_BASE}/api/dashboard`, {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({ charts: [], cards: [] }),
+            body: JSON.stringify({
+                session_id: getDashboardSessionId(),
+                charts: [],
+                cards: [],
+            }),
         });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.success === false || data.error) {
+            throw new Error(data.error || "Failed to clear dashboard.");
+        }
         refreshDashboard();
     } catch (e) {
-        alert("Error clearing dashboard.");
+        showAppError(e.message || "Error clearing dashboard.");
         console.error(e);
     }
 }
@@ -585,9 +622,7 @@ function clearDashboard() {
     App.state.dashboardCharts = [];
     App.state.dashboardCards = [];
     App.state.dashboardLoaded = false;
-    if (dashboardGrid) {
-        try { dashboardGrid.removeAll(false); } catch (e) { }
-    }
+    removeAllDashboardWidgets();
     const emptyEl = document.getElementById("dashboard-empty");
     if (emptyEl) emptyEl.classList.remove("hidden");
     const countBadge = document.getElementById("dashboard-chart-count");

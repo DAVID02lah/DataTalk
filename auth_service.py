@@ -155,6 +155,33 @@ def get_profile(user_id: str) -> dict | None:
         return None
 
 
+def update_profile(user_id: str, display_name: str) -> dict:
+    """Create or update a user's profile record."""
+    cleaned = str(display_name or "").strip()
+    if not cleaned:
+        raise ValidationError("Display name is required")
+
+    tokens = [part for part in cleaned.split() if part]
+    if tokens:
+        initials = "".join(token[0] for token in tokens[:2]).upper()
+    else:
+        initials = cleaned[:2].upper()
+
+    payload = {
+        "id": user_id,
+        "display_name": cleaned[:80],
+        "avatar_initials": initials[:2],
+    }
+
+    sb_service = get_supabase_service()
+    try:
+        sb_service.table("profiles").upsert(payload, on_conflict="id").execute()
+        return payload
+    except Exception as e:
+        logger.error("Error updating profile for %s: %s", user_id, e)
+        raise ValidationError("Failed to update profile")
+
+
 def logout(access_token: str) -> bool:
     """Sign out the user (invalidates the refresh token server-side)."""
     sb = get_supabase()
