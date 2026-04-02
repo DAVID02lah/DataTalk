@@ -13,6 +13,72 @@ function withDashboardSession(url) {
     return `${url}${glue}session_id=${encodeURIComponent(sessionId)}`;
 }
 
+async function fetchDashboardApiJson(url, options = {}) {
+    const response = await fetch(url, options);
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
+}
+
+function assertDashboardApiSuccess(response, data, fallbackMessage, options = {}) {
+    const { requireSuccessFlag = false } = options;
+    const failed = !response.ok || data.error || (requireSuccessFlag && data.success === false);
+    if (failed) {
+        throw new Error(data.text || data.error || fallbackMessage);
+    }
+}
+
+function updatePinnedChartButton(chartDiv) {
+    const chartContainer = chartDiv.closest(".chat-chart-container");
+    const btn = chartContainer ? chartContainer.querySelector(".chart-action-btn") : null;
+    if (!btn) return;
+    btn.textContent = "✅ Pinned!";
+    btn.classList.add("pinned");
+    btn.disabled = true;
+}
+
+function isVisualsViewActive() {
+    const visualsView = document.getElementById("view-visuals");
+    return !!visualsView && visualsView.classList.contains("active");
+}
+
+function applyDashboardPayload(data) {
+    App.state.dashboardCharts = Array.isArray(data?.charts) ? data.charts : [];
+    App.state.dashboardCards = Array.isArray(data?.cards) ? data.cards : [];
+    App.state.dashboardLoaded = true;
+}
+
+function chartLayoutFromGridPos(index, gridPos = {}) {
+    return {
+        x: gridPos.x ?? (index % 2) * 6,
+        y: gridPos.y ?? Math.floor(index / 2) * 6,
+        w: gridPos.w ?? 6,
+        h: gridPos.h ?? 6,
+    };
+}
+
+function cardLayoutFromGridPos(index, chartsCount, gridPos = {}) {
+    return {
+        x: gridPos.x ?? (index % 4) * 3,
+        y: gridPos.y ?? Math.floor(index / 4) * 2 + (chartsCount > 0 ? 10 : 0),
+        w: gridPos.w ?? 3,
+        h: gridPos.h ?? 2,
+    };
+}
+
+async function persistDashboardState(charts = App.state.dashboardCharts || [], cards = App.state.dashboardCards || []) {
+    const { response, data } = await fetchDashboardApiJson(`${App.API_BASE}/api/dashboard`, {
+        method: "POST",
+        headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+            session_id: getDashboardSessionId(),
+            charts,
+            cards,
+        }),
+    });
+    assertDashboardApiSuccess(response, data, "Failed to save dashboard.", { requireSuccessFlag: true });
+    return data;
+}
+
 async function pinChart(chartId, title) {
     const chartDiv = document.getElementById(chartId);
     if (!chartDiv) return;
@@ -27,7 +93,7 @@ async function pinChart(chartId, title) {
     }
 
     try {
-        const response = await fetch(`${App.API_BASE}/api/dashboard/pin`, {
+        const { response, data: result } = await fetchDashboardApiJson(`${App.API_BASE}/api/dashboard/pin`, {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
@@ -40,26 +106,14 @@ async function pinChart(chartId, title) {
             }),
         });
 
-        const result = await response.json();
+        assertDashboardApiSuccess(response, result, "Failed to pin chart.", { requireSuccessFlag: true });
+        updatePinnedChartButton(chartDiv);
 
-        if (result.success) {
-            // Update the pin button to show success
-            const btn = chartDiv.closest(".chat-chart-container").querySelector(".chart-action-btn");
-            if (btn) {
-                btn.textContent = "✅ Pinned!";
-                btn.classList.add("pinned");
-                btn.disabled = true;
-            }
-            // Refresh dashboard if visuals tab is active
-            if (document.getElementById("view-visuals") &&
-                document.getElementById("view-visuals").classList.contains("active")) {
-                refreshDashboard();
-            }
-        } else {
-            appendErrorMessage("Failed to pin chart: " + (result.error || "Unknown error"));
+        if (isVisualsViewActive()) {
+            refreshDashboard();
         }
     } catch (error) {
-        appendErrorMessage("Error pinning chart. Is the backend running?");
+        appendErrorMessage(error.message || "Error pinning chart. Is the backend running?");
         console.error("Pin error:", error);
     }
 }
@@ -325,19 +379,14 @@ function initDashboardGridStack() {
 
 async function refreshDashboard() {
     try {
-        const response = await fetch(withDashboardSession(`${App.API_BASE}/api/dashboard`), {
+        const { data } = await fetchDashboardApiJson(withDashboardSession(`${App.API_BASE}/api/dashboard`), {
             headers: App.getAuthHeaders()
         });
-        const data = await response.json();
-        App.state.dashboardCharts = data.charts || [];
-        App.state.dashboardCards = data.cards || [];
-        App.state.dashboardLoaded = true;
+        applyDashboardPayload(data);
         renderDashboardGrid();
     } catch (e) {
         console.error("Failed to load dashboard:", e);
-        App.state.dashboardCharts = [];
-        App.state.dashboardCards = [];
-        App.state.dashboardLoaded = true;
+        applyDashboardPayload({ charts: [], cards: [] });
         renderDashboardGrid();
     }
 }
@@ -345,7 +394,6 @@ async function refreshDashboard() {
 function renderDashboardGrid() {
     if (!App.state.dashboardLoaded) return;
 
-    // Initialize GridStack if not already done
     if (!dashboardGrid) {
         if (!initDashboardGridStack()) {
             console.error('Cannot render dashboard: grid not initialized');
@@ -359,10 +407,8 @@ function renderDashboardGrid() {
     const cards = App.state.dashboardCards || [];
     const totalWidgets = charts.length + cards.length;
 
-    // Update count
     if (countBadge) countBadge.textContent = `${totalWidgets} widget${totalWidgets !== 1 ? "s" : ""}`;
 
-    // Empty state
     if (totalWidgets === 0) {
         if (emptyEl) emptyEl.classList.remove("hidden");
         removeAllDashboardWidgets();
@@ -370,47 +416,29 @@ function renderDashboardGrid() {
     }
     if (emptyEl) emptyEl.classList.add("hidden");
 
-    // Clear existing widgets safely
     removeAllDashboardWidgets();
 
-    // Sort by position
     const sorted = [...charts].sort((a, b) => (a.position || 0) - (b.position || 0));
 
-    // Add each chart as a widget
     sorted.forEach((chart, index) => {
         if (!chart || !chart.id) return;
 
         const widgetId = `widget-dash-${chart.id}`;
 
-        // Use saved grid position if available, otherwise auto-layout
-        const gridPos = chart.gridPos || {};
-        const layoutOverrides = {
-            x: gridPos.x ?? (index % 2) * 6,
-            y: gridPos.y ?? Math.floor(index / 2) * 6,
-            w: gridPos.w ?? 6,
-            h: gridPos.h ?? 6,
-        };
+        const layoutOverrides = chartLayoutFromGridPos(index, chart.gridPos || {});
 
         addDashboardChartWidget(chart, widgetId, layoutOverrides);
     });
 
-    // Add card widgets
     cards.forEach((card, index) => {
         if (!card || !card.id) return;
 
         const widgetId = `widget-card-${card.id}`;
-        const gridPos = card.gridPos || {};
-        const layoutOverrides = {
-            x: gridPos.x ?? (index % 4) * 3,
-            y: gridPos.y ?? Math.floor(index / 4) * 2 + (charts.length > 0 ? 10 : 0),
-            w: gridPos.w ?? 3,
-            h: gridPos.h ?? 2,
-        };
+        const layoutOverrides = cardLayoutFromGridPos(index, charts.length, card.gridPos || {});
 
         addDashboardCardWidget(card, widgetId, layoutOverrides);
     });
 
-    // GridStack can settle dimensions asynchronously; run follow-up resize passes.
     scheduleDashboardResizeSweep();
 }
 
@@ -523,15 +551,7 @@ function saveDashboardLayoutFromGrid() {
 
 async function saveDashboardToBackend() {
     try {
-        await fetch(`${App.API_BASE}/api/dashboard`, {
-            method: "POST",
-            headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({
-                session_id: getDashboardSessionId(),
-                charts: App.state.dashboardCharts || [],
-                cards: App.state.dashboardCards || [],
-            }),
-        });
+        await persistDashboardState();
     } catch (e) {
         console.error("Failed to save dashboard:", e);
     }
@@ -564,18 +584,14 @@ function resizeDashboardOnActivate() {
 
 async function removeDashChart(chartId) {
     try {
-        const resp = await fetch(withDashboardSession(`${App.API_BASE}/api/dashboard/remove/${chartId}`), {
+        const { response, data } = await fetchDashboardApiJson(withDashboardSession(`${App.API_BASE}/api/dashboard/remove/${chartId}`), {
             method: "DELETE",
             headers: App.getAuthHeaders()
         });
-        const data = await resp.json().catch(() => ({}));
-        if (resp.ok && data.success) {
-            refreshDashboard();
-        } else {
-            showAppError("Failed to remove chart: " + (data.error || "Unknown error"));
-        }
+        assertDashboardApiSuccess(response, data, "Failed to remove chart.", { requireSuccessFlag: true });
+        refreshDashboard();
     } catch (e) {
-        showAppError("Error removing chart.");
+        showAppError(e.message || "Error removing chart.");
         console.error(e);
     }
 }
@@ -595,19 +611,7 @@ function downloadDashChart(plotId) {
 async function clearAllCharts() {
     if (!confirm("Remove all widgets from the dashboard?")) return;
     try {
-        const resp = await fetch(`${App.API_BASE}/api/dashboard`, {
-            method: "POST",
-            headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({
-                session_id: getDashboardSessionId(),
-                charts: [],
-                cards: [],
-            }),
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok || data.success === false || data.error) {
-            throw new Error(data.error || "Failed to clear dashboard.");
-        }
+        await persistDashboardState([], []);
         refreshDashboard();
     } catch (e) {
         showAppError(e.message || "Error clearing dashboard.");
@@ -771,6 +775,56 @@ function applyCustomLegend() {
     }
 }
 
+function formatAggregationLabel(aggregation = 'count') {
+    const safe = String(aggregation || 'count');
+    return safe.charAt(0).toUpperCase() + safe.slice(1);
+}
+
+function setCardModalError(errorEl, message = '') {
+    if (!errorEl) return;
+    if (!message) {
+        errorEl.style.display = 'none';
+        return;
+    }
+    errorEl.textContent = message;
+    errorEl.style.display = 'block';
+}
+
+function setCardSubmitButtonState(buttonEl, isBusy) {
+    if (!buttonEl) return;
+    buttonEl.disabled = isBusy;
+    buttonEl.innerHTML = isBusy ? 'Adding...' : 'Add Card';
+}
+
+async function loadCardColumns() {
+    if (App.state.activeFile?.summary?.columns) {
+        return App.state.activeFile.summary.columns;
+    }
+
+    if (!App.state.activeFile?.filename) {
+        return [];
+    }
+
+    const { response, data } = await fetchDashboardApiJson(`${App.API_BASE}/api/data-summary/${encodeURIComponent(App.state.activeFile.filename)}`, {
+        headers: App.getAuthHeaders()
+    });
+    if (!response.ok) {
+        return [];
+    }
+    return data.summary?.columns || [];
+}
+
+function buildDashboardCard({ column, aggregation, title, value }) {
+    const aggLabel = formatAggregationLabel(aggregation);
+    return {
+        id: `card_${Date.now()}`,
+        column,
+        aggregation,
+        title: title || `${aggLabel} of ${column}`,
+        value,
+    };
+}
+
 // ============================================================
 // KPI Card Widget
 // ============================================================
@@ -793,7 +847,7 @@ function addDashboardCardWidget(cardData, widgetId, layoutOverrides) {
         }
     }
 
-    const aggLabel = (cardData.aggregation || 'count').charAt(0).toUpperCase() + (cardData.aggregation || 'count').slice(1);
+    const aggLabel = formatAggregationLabel(cardData.aggregation || 'count');
     const title = cardData.title || `${aggLabel} of ${cardData.column || 'Unknown'}`;
 
     const contentHtml = `
@@ -850,20 +904,7 @@ async function showAddCardModal() {
     colSelect.innerHTML = '<option value="">Loading columns...</option>';
 
     try {
-        let columns = [];
-
-        if (App.state.activeFile && App.state.activeFile.summary && App.state.activeFile.summary.columns) {
-            columns = App.state.activeFile.summary.columns;
-        } else if (App.state.activeFile && App.state.activeFile.filename) {
-            const response = await fetch(`${App.API_BASE}/api/data-summary/${encodeURIComponent(App.state.activeFile.filename)}`, {
-                headers: App.getAuthHeaders()
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                columns = data.summary?.columns || [];
-            }
-        }
+        const columns = await loadCardColumns();
 
         if (columns.length > 0) {
             colSelect.innerHTML = '<option value="">Select a column...</option>' +
@@ -894,48 +935,28 @@ async function submitAddCard() {
     const title = titleInput ? titleInput.value.trim() : '';
 
     if (!column) {
-        if (errEl) {
-            errEl.textContent = "Please select a column.";
-            errEl.style.display = "block";
-        }
+        setCardModalError(errEl, 'Please select a column.');
         return;
     }
 
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = "Adding...";
-    }
-    if (errEl) errEl.style.display = "none";
+    setCardSubmitButtonState(btn, true);
+    setCardModalError(errEl);
 
     try {
-        // Fetch the computed value from the backend
-        const response = await fetch(`${App.API_BASE}/api/dashboard/card-data`, {
+        const { response, data } = await fetchDashboardApiJson(`${App.API_BASE}/api/dashboard/card-data`, {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ column, aggregation })
         });
 
-        const data = await response.json();
-
-        if (data.error) {
-            if (errEl) {
-                errEl.textContent = data.error;
-                errEl.style.display = "block";
-            }
-            return;
-        }
-
-        // Build the card object
-        const aggLabel = aggregation.charAt(0).toUpperCase() + aggregation.slice(1);
-        const newCard = {
-            id: `card_${Date.now()}`,
-            column: column,
-            aggregation: aggregation,
-            title: title || `${aggLabel} of ${column}`,
+        assertDashboardApiSuccess(response, data, 'Failed to fetch card data.');
+        const newCard = buildDashboardCard({
+            column,
+            aggregation,
+            title,
             value: data.value,
-        };
+        });
 
-        // Add to state and persist
         if (!App.state.dashboardCards) App.state.dashboardCards = [];
         App.state.dashboardCards.push(newCard);
         await saveDashboardToBackend();
@@ -945,14 +966,8 @@ async function submitAddCard() {
 
     } catch (e) {
         console.error('Failed to add card:', e);
-        if (errEl) {
-            errEl.textContent = "Network error while connecting to server.";
-            errEl.style.display = "block";
-        }
+        setCardModalError(errEl, e.message || 'Network error while connecting to server.');
     } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = "Add Card";
-        }
+        setCardSubmitButtonState(btn, false);
     }
 }

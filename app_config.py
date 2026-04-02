@@ -65,7 +65,7 @@ EXEC_TIMEOUT = get_int_env("EXEC_TIMEOUT", 60)
 RATE_LIMIT = os.getenv("RATE_LIMIT", "5 per minute")
 
 # Gemini Flash Lite pricing conversion helper.
-USD_TO_MYR_RATE = get_float_env("USD_TO_MYR_RATE", 4.70)
+USD_TO_MYR_RATE = get_float_env("USD_TO_MYR_RATE", 4.00)
 
 # Pagination
 DEFAULT_PAGE_SIZE = get_int_env("DEFAULT_PAGE_SIZE", 50)

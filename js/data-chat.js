@@ -153,6 +153,47 @@ function showErrorToast(message) {
     }, 4500);
 }
 
+function createUserFacingError(message) {
+    const err = new Error(message || "An unexpected error occurred.");
+    err.userFacing = true;
+    return err;
+}
+
+async function fetchApiJson(url, options = {}) {
+    const response = await fetch(url, options);
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
+}
+
+function assertApiSuccess(response, data, fallbackMessage, options = {}) {
+    const { requireSuccessFlag = false } = options;
+    const failed = !response.ok || data.error || (requireSuccessFlag && data.success === false);
+    if (failed) {
+        throw createUserFacingError(data.text || data.error || fallbackMessage);
+    }
+}
+
+async function refreshSessionDependentViews(options = {}) {
+    const {
+        syncActiveFile = false,
+        clearDashboardFirst = false,
+    } = options;
+
+    await refreshConversationList({ silent: true });
+    if (syncActiveFile) {
+        await syncActiveSessionFile();
+    }
+    await loadChatHistory({ replace: true, silent: true });
+    await updateUsageSummary({ silent: true });
+
+    if (clearDashboardFirst && typeof clearDashboard === "function") {
+        clearDashboard();
+    }
+    if (typeof refreshDashboard === "function") {
+        await refreshDashboard();
+    }
+}
+
 function loadFileIntoGrid(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -204,17 +245,12 @@ async function handleFileUpload(files) {
         const formData = new FormData();
         formData.append("file", file);
 
-        const response = await fetch(`${App.API_BASE}/api/upload`, {
+        const { response, data: result } = await fetchApiJson(`${App.API_BASE}/api/upload`, {
             method: "POST",
             headers: App.getAuthHeaders(),
             body: formData,
         });
-
-        const result = await response.json();
-
-        if (!response.ok || result.error) {
-            throw new Error(result.error || "Upload failed");
-        }
+        assertApiSuccess(response, result, "Upload failed");
 
         App.state.activeFile = {
             filename: result.path || result.filename,
@@ -225,19 +261,14 @@ async function handleFileUpload(files) {
         showUploadSuccess(result);
         updateSidebarFileInfo(result.path || result.filename, result.summary);
 
-        await refreshConversationList({ silent: true });
-        await loadChatHistory({ replace: true, silent: true });
-        await updateUsageSummary({ silent: true });
-        if (typeof refreshDashboard === "function") {
-            await refreshDashboard();
-        }
+        await refreshSessionDependentViews();
 
         fetchSmartQuestions();
         populateDataPreview(result.summary);
 
     } catch (error) {
         console.error("Upload error:", error);
-        showUploadError(dropZone, error.message);
+        showUploadError(dropZone, error.message || "Upload failed");
     }
 }
 
@@ -357,12 +388,12 @@ async function loadDatasetForPath(filePath, options = {}) {
     }
 
     try {
-        const summaryResp = await fetch(`${App.API_BASE}/api/data-summary/${encodePathForRoute(normalizedPath)}`, {
+        const { response: summaryResp, data: summaryData } = await fetchApiJson(`${App.API_BASE}/api/data-summary/${encodePathForRoute(normalizedPath)}`, {
             headers: App.getAuthHeaders()
         });
-        const summaryData = await summaryResp.json().catch(() => ({}));
-        if (!summaryResp.ok || summaryData.error || !summaryData.summary) {
-            throw new Error(summaryData.error || "Failed to load dataset summary.");
+        assertApiSuccess(summaryResp, summaryData, "Failed to load dataset summary.");
+        if (!summaryData.summary) {
+            throw createUserFacingError("Failed to load dataset summary.");
         }
 
         const fullDataResp = await fetch(`${App.API_BASE}/api/data/${encodePathForRoute(normalizedPath)}`, {
@@ -445,13 +476,10 @@ function renderConversationList() {
 async function refreshConversationList(options = {}) {
     const { silent = false } = options;
     try {
-        const response = await fetch(`${App.API_BASE}/api/chat/sessions`, {
+        const { response, data } = await fetchApiJson(`${App.API_BASE}/api/chat/sessions`, {
             headers: App.getAuthHeaders()
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.error) {
-            throw new Error(data.error || "Failed to load conversations.");
-        }
+        assertApiSuccess(response, data, "Failed to load conversations.");
 
         App.state.chatSessions = data.sessions || [];
         if (Object.prototype.hasOwnProperty.call(data, "active_session_id")) {
@@ -488,23 +516,14 @@ async function activateConversation(sessionId) {
     if (!sessionId) return;
 
     try {
-        const response = await fetch(`${App.API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/activate`, {
+        const { response, data } = await fetchApiJson(`${App.API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/activate`, {
             method: "POST",
             headers: App.getAuthHeaders(),
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.error || data.success === false) {
-            throw new Error(data.text || data.error || "Failed to activate conversation.");
-        }
+        assertApiSuccess(response, data, "Failed to activate conversation.", { requireSuccessFlag: true });
 
         App.state.activeSessionId = data.active_session_id || sessionId;
-        await refreshConversationList({ silent: true });
-        await syncActiveSessionFile();
-        await loadChatHistory({ replace: true, silent: true });
-        await updateUsageSummary({ silent: true });
-        if (typeof refreshDashboard === "function") {
-            await refreshDashboard();
-        }
+        await refreshSessionDependentViews({ syncActiveFile: true });
     } catch (e) {
         showAppError(e.message || "Could not activate conversation.");
     }
@@ -512,27 +531,18 @@ async function activateConversation(sessionId) {
 
 async function createNewConversation() {
     try {
-        const response = await fetch(`${App.API_BASE}/api/chat/sessions/new`, {
+        const { response, data } = await fetchApiJson(`${App.API_BASE}/api/chat/sessions/new`, {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ filename: App.state.activeFile?.filename || null }),
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.error || data.success === false) {
-            throw new Error(data.text || data.error || "Failed to create conversation.");
-        }
+        assertApiSuccess(response, data, "Failed to create conversation.", { requireSuccessFlag: true });
 
         App.state.activeSessionId = data.session?.id || null;
-        await refreshConversationList({ silent: true });
-        await syncActiveSessionFile();
-        await loadChatHistory({ replace: true, silent: true });
-        await updateUsageSummary({ silent: true });
-        if (typeof clearDashboard === "function") {
-            clearDashboard();
-        }
-        if (typeof refreshDashboard === "function") {
-            await refreshDashboard();
-        }
+        await refreshSessionDependentViews({
+            syncActiveFile: true,
+            clearDashboardFirst: true,
+        });
     } catch (e) {
         showAppError(e.message || "Could not create conversation.");
     }
@@ -548,26 +558,17 @@ async function deleteConversation(sessionId, event) {
     if (!window.confirm("Delete this conversation?")) return;
 
     try {
-        const response = await fetch(`${App.API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
+        const { response, data } = await fetchApiJson(`${App.API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
             method: "DELETE",
             headers: App.getAuthHeaders(),
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.error || data.success === false) {
-            throw new Error(data.text || data.error || "Failed to delete conversation.");
-        }
+        assertApiSuccess(response, data, "Failed to delete conversation.", { requireSuccessFlag: true });
 
         App.state.activeSessionId = data.active_session_id || null;
-        await refreshConversationList({ silent: true });
-        await syncActiveSessionFile();
-        await loadChatHistory({ replace: true, silent: true });
-        await updateUsageSummary({ silent: true });
-        if (typeof clearDashboard === "function") {
-            clearDashboard();
-        }
-        if (typeof refreshDashboard === "function") {
-            await refreshDashboard();
-        }
+        await refreshSessionDependentViews({
+            syncActiveFile: true,
+            clearDashboardFirst: true,
+        });
     } catch (e) {
         showAppError(e.message || "Could not delete conversation.");
     }
@@ -626,13 +627,10 @@ function renderUsageSummary(summary) {
 async function updateUsageSummary(options = {}) {
     const { silent = false } = options;
     try {
-        const response = await fetch(`${App.API_BASE}/api/usage/summary`, {
+        const { response, data } = await fetchApiJson(`${App.API_BASE}/api/usage/summary`, {
             headers: App.getAuthHeaders()
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.error) {
-            throw new Error(data.error || "Failed to fetch usage summary.");
-        }
+        assertApiSuccess(response, data, "Failed to fetch usage summary.");
 
         renderUsageSummary(data);
         return data;
@@ -655,8 +653,7 @@ function startUsageSummaryAutoRefresh() {
 
 async function checkExistingFiles() {
     try {
-        await refreshConversationList({ silent: true });
-        await syncActiveSessionFile();
+        await refreshSessionDependentViews({ syncActiveFile: true });
     } catch (e) {
         console.log("Backend not available yet:", e.message);
     }
@@ -664,14 +661,90 @@ async function checkExistingFiles() {
 
 async function initializeDashboardSidebarState() {
     await checkExistingFiles();
-    await loadChatHistory({ replace: true, silent: true });
-    await refreshConversationList({ silent: true });
-    await syncActiveSessionFile();
-    await updateUsageSummary({ silent: true });
-    if (typeof refreshDashboard === "function") {
-        await refreshDashboard();
-    }
     startUsageSummaryAutoRefresh();
+}
+
+function setChatComposerBusyState(inputEl, sendBtn, isBusy) {
+    if (inputEl) {
+        inputEl.disabled = isBusy;
+    }
+    if (sendBtn) {
+        sendBtn.disabled = isBusy || !inputEl || !inputEl.value.trim();
+    }
+    if (!isBusy && inputEl) {
+        inputEl.focus();
+    }
+}
+
+function buildChatStreamPayload(message, skipCache) {
+    return {
+        message,
+        filename: App.state.activeFile ? App.state.activeFile.filename : null,
+        skip_cache: skipCache,
+        session_id: App.state.activeSessionId || null,
+    };
+}
+
+function applyChatStreamEvent(eventName, payload, streamState) {
+    if (eventName === "phase") {
+        updateTypingPhase(payload.message || payload.phase);
+        return;
+    }
+
+    if (eventName === "result") {
+        streamState.finalResult = payload;
+        return;
+    }
+
+    if (eventName === "error") {
+        throw createUserFacingError(payload.text || "An error occurred.");
+    }
+}
+
+async function readChatStreamResult(response) {
+    const reader = response.body?.getReader();
+    if (!reader) {
+        throw createUserFacingError("No response stream was returned.");
+    }
+
+    const decoder = new TextDecoder();
+    const streamState = { finalResult: null };
+    let buffer = "";
+    let currentEvent = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+            if (line.startsWith("event: ")) {
+                currentEvent = line.slice(7).trim();
+                continue;
+            }
+
+            if (!line.startsWith("data: ") || !currentEvent) {
+                continue;
+            }
+
+            let payload;
+            try {
+                payload = JSON.parse(line.slice(6));
+            } catch (e) {
+                console.warn("SSE parse error:", e);
+                currentEvent = "";
+                continue;
+            }
+
+            applyChatStreamEvent(currentEvent, payload, streamState);
+            currentEvent = "";
+        }
+    }
+
+    return streamState.finalResult;
 }
 
 // ============================================================
@@ -679,6 +752,9 @@ async function initializeDashboardSidebarState() {
 // ============================================================
 async function sendMessage(skipCache = false) {
     const input = document.getElementById("chat-input");
+    if (!input) return;
+
+    const sendBtn = document.getElementById("send-btn");
     const message = input.value.trim();
     if (!message || App.state.isWaitingForAI) return;
 
@@ -690,9 +766,7 @@ async function sendMessage(skipCache = false) {
     showChatMessages();
 
     // Disable inputs to prevent multi-sends
-    input.disabled = true;
-    const sendBtn = document.getElementById("send-btn");
-    if (sendBtn) sendBtn.disabled = true;
+    setChatComposerBusyState(input, sendBtn, true);
 
     // Add user message
     appendChatMessage("user", message);
@@ -705,60 +779,15 @@ async function sendMessage(skipCache = false) {
         const response = await fetch(`${App.API_BASE}/api/chat/stream`, {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({
-                message: message,
-                filename: App.state.activeFile ? App.state.activeFile.filename : null,
-                skip_cache: skipCache,
-                session_id: App.state.activeSessionId || null,
-            }),
+            body: JSON.stringify(buildChatStreamPayload(message, skipCache)),
         });
 
         if (!response.ok) {
-            // Non-streaming error (e.g. 400/401)
             const errData = await response.json().catch(() => ({}));
-            hideTypingIndicator();
-            appendErrorMessage(errData.text || errData.error || "An unexpected error occurred.");
-            return;
+            throw createUserFacingError(errData.text || errData.error || "An unexpected error occurred.");
         }
 
-        // Consume the SSE stream
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let finalResult = null;
-        let currentEvent = null;
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            // Keep the last (possibly incomplete) line in the buffer
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-                if (line.startsWith("event: ")) {
-                    currentEvent = line.slice(7).trim();
-                } else if (line.startsWith("data: ") && currentEvent) {
-                    try {
-                        const data = JSON.parse(line.slice(6));
-                        if (currentEvent === "phase") {
-                            updateTypingPhase(data.message || data.phase);
-                        } else if (currentEvent === "result") {
-                            finalResult = data;
-                        } else if (currentEvent === "error") {
-                            hideTypingIndicator();
-                            appendErrorMessage(data.text || "An error occurred.");
-                            return;
-                        }
-                        // "done" event — loop will end when stream closes
-                    } catch (e) {
-                        console.warn("SSE parse error:", e);
-                    }
-                    currentEvent = null;
-                }
-            }
-        }
+        const finalResult = await readChatStreamResult(response);
 
         hideTypingIndicator();
 
@@ -775,14 +804,16 @@ async function sendMessage(skipCache = false) {
 
     } catch (error) {
         hideTypingIndicator();
-        appendErrorMessage(
-            `Could not connect to the backend. Make sure \`server.py\` is running.\n\n\`${error.message}\``
-        );
+        if (error && error.userFacing) {
+            appendErrorMessage(error.message || "An error occurred.");
+        } else {
+            appendErrorMessage(
+                `Could not connect to the backend. Make sure \`server.py\` is running.\n\n\`${error.message}\``
+            );
+        }
     } finally {
         App.state.isWaitingForAI = false;
-        input.disabled = false;
-        if (sendBtn) sendBtn.disabled = !input.value.trim();
-        input.focus();
+        setChatComposerBusyState(input, sendBtn, false);
         updateUsageSummary({ silent: true });
     }
 }
@@ -828,13 +859,10 @@ async function loadChatHistory(options = {}) {
     }
 
     try {
-        const response = await fetch(`${App.API_BASE}/api/chat/history`, {
+        const { response, data } = await fetchApiJson(`${App.API_BASE}/api/chat/history`, {
             headers: App.getAuthHeaders()
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.error) {
-            throw new Error(data.error || data.text || "Could not load chat history.");
-        }
+        assertApiSuccess(response, data, "Could not load chat history.");
 
         if (data.session_id) {
             App.state.activeSessionId = data.session_id;
@@ -867,14 +895,11 @@ async function loadChatHistory(options = {}) {
 
 async function clearChatHistory() {
     try {
-        const response = await fetch(`${App.API_BASE}/api/chat/clear`, {
+        const { response, data } = await fetchApiJson(`${App.API_BASE}/api/chat/clear`, {
             method: "POST",
             headers: App.getAuthHeaders()
         });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.success === false || data.error) {
-            throw new Error(data.error || "Failed to clear chat history.");
-        }
+        assertApiSuccess(response, data, "Failed to clear chat history.", { requireSuccessFlag: true });
 
         resetChatMessagesUI();
         showChatHero();
@@ -888,13 +913,7 @@ async function clearChatHistory() {
             clearDashboard();
         }
 
-        await refreshConversationList({ silent: true });
-        await loadChatHistory({ replace: true, silent: true });
-        await refreshConversationList({ silent: true });
-        await updateUsageSummary({ silent: true });
-        if (typeof refreshDashboard === "function") {
-            await refreshDashboard();
-        }
+        await refreshSessionDependentViews();
 
     } catch (e) {
         console.error("Error clearing chat:", e);

@@ -29,12 +29,18 @@ import app_config
 from app_state import SessionManager
 import data_service
 import gemini_service
-import code_executor
 import auth_service
 import chat_session_service
 import usage_service
 from auth_service import require_auth
-from errors import DataTalkError, DatasetNotFoundError, ValidationError, LLMServiceError, CodeExecutionError
+from errors import DataTalkError, DatasetNotFoundError, ValidationError
+from services.analysis_pipeline import run_analysis_pipeline
+from services.dashboard_store import (
+    get_session_dashboard,
+    load_dashboard_store,
+    resolve_requested_session_id,
+    save_dashboard_store,
+)
 
 
 # ==============================================================
@@ -217,86 +223,6 @@ def _load_chat_history_for_user(user_id):
         logger.error("Chat history load failed from Supabase: %s", e)
 
 
-def _resolve_requested_session_id(state, request_data=None):
-    """Resolve dashboard/chat session id from request payload or query string."""
-    requested = ""
-    if isinstance(request_data, dict):
-        requested = str(request_data.get("session_id") or "").strip()
-    if not requested:
-        requested = str(request.args.get("session_id") or "").strip()
-
-    if requested:
-        active = chat_session_service.set_active_session(state, requested)
-        if not active:
-            raise ValidationError("Invalid session_id")
-        return requested
-
-    active = chat_session_service.ensure_active_session(
-        state,
-        filename=state.active_file.get("filename"),
-    )
-    return active.get("id")
-
-
-def _normalise_dashboard_store(raw_config, session_id):
-    """Normalise dashboard config into a per-session storage format."""
-    if isinstance(raw_config, dict) and isinstance(raw_config.get("sessions"), dict):
-        store = raw_config
-    else:
-        legacy_charts = []
-        legacy_cards = []
-        if isinstance(raw_config, dict):
-            if isinstance(raw_config.get("charts"), list):
-                legacy_charts = raw_config.get("charts")
-            if isinstance(raw_config.get("cards"), list):
-                legacy_cards = raw_config.get("cards")
-        store = {
-            "version": 2,
-            "sessions": {},
-        }
-        if legacy_charts or legacy_cards:
-            store["sessions"][session_id] = {
-                "charts": legacy_charts,
-                "cards": legacy_cards,
-            }
-
-    sessions = store.get("sessions")
-    if not isinstance(sessions, dict):
-        sessions = {}
-        store["sessions"] = sessions
-
-    for sid, payload in list(sessions.items()):
-        if not isinstance(payload, dict):
-            sessions[sid] = {"charts": [], "cards": []}
-            continue
-        charts = payload.get("charts")
-        cards = payload.get("cards")
-        payload["charts"] = charts if isinstance(charts, list) else []
-        payload["cards"] = cards if isinstance(cards, list) else []
-
-    sessions.setdefault(session_id, {"charts": [], "cards": []})
-    store["version"] = 2
-    return store
-
-
-def _load_dashboard_store(user_id, session_id):
-    """Load and normalise dashboard storage config for a user."""
-    sb_service = auth_service.get_supabase_service()
-    result = sb_service.table("dashboard_configs").select("config").eq("user_id", user_id).execute()
-    raw_config = result.data[0]["config"] if (result.data and len(result.data) > 0) else {}
-    return _normalise_dashboard_store(raw_config, session_id)
-
-
-def _save_dashboard_store(user_id, config):
-    """Persist a normalised dashboard config for a user."""
-    sb_service = auth_service.get_supabase_service()
-    sb_service.table("dashboard_configs").upsert({
-        "user_id": user_id,
-        "config": config,
-        "updated_at": "now()",
-    }, on_conflict="user_id").execute()
-
-
 def _error_response(message, status_code=500, error_type="server_error"):
     """Return a standardised JSON error with proper HTTP status code."""
     return jsonify({
@@ -313,183 +239,6 @@ def _error_response(message, status_code=500, error_type="server_error"):
 def _sse_event(event, data):
     """Format a single SSE event string."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-# ==============================================================
-# Core: Analysis Pipeline
-# ==============================================================
-
-def _run_analysis_pipeline(message, filename, user_id, state, skip_cache=False):
-    """
-    Shared analysis pipeline consumed by both chat() and chat_stream().
-
-    Yields tuples of (event_type, payload):
-      ("phase",  {"phase": "...", "message": "..."})  — progress update
-      ("result", {full result dict})                   — final result
-      ("error",  {"error": True, "text": "...", "error_type": "..."}) — error
-    """
-    try:
-        # --- Cache check ---
-        cache_key = f"{filename}:{message}"
-        if not skip_cache:
-            cached_result = state.query_cache.get(cache_key)
-            if cached_result is not None:
-                cached_result = cached_result.copy()
-                cached_result["cached"] = True
-                _log_event("chat_cache_hit", user_id=user_id, filename=filename)
-                yield ("result", cached_result)
-                return
-
-        # --- Load dataset ---
-        yield ("phase", {"phase": "loading", "message": "Loading dataset..."})
-        df = _get_dataframe(filename, user_id=user_id, state=state)
-
-        active_session = chat_session_service.ensure_active_session(state, filename=filename)
-        history = active_session.get("messages", [])
-        if not isinstance(history, list):
-            history = []
-        active_session["messages"] = history
-        state.chat_history = history
-
-        # --- Build context (cached per file) ---
-        schema_context_lean = state.get_cached(filename, "schema_lean")
-        if schema_context_lean is None:
-            schema_context_lean = data_service.get_schema_string(df, max_tokens=2000)
-            state.set_cached(filename, "schema_lean", schema_context_lean)
-
-        profile = state.get_cached(filename, "profile")
-        if profile is None:
-            profile = data_service.get_data_profile(df)
-            state.set_cached(filename, "profile", profile)
-        profile_context = data_service.get_profile_string(profile)
-        _log_event("profile_detected", dataset_type=profile["dataset_type"])
-
-        # --- Phase 0.5: Extraction ---
-        yield ("phase", {"phase": "extracting", "message": "Extracting relevant data..."})
-        extracted_data_context = None
-        try:
-            _log_event("extraction_started")
-            extraction_code, usage = gemini_service.generate_data_extraction_code(message, schema_context_lean)
-            _record_and_log_usage(state, usage, "Extraction")
-            if extraction_code:
-                extracted_data = code_executor.execute_extraction_code(extraction_code, df)
-                if isinstance(extracted_data, dict) and not extracted_data.get("error"):
-                    extracted_data_context = json.dumps(extracted_data, default=str)
-                    _log_event("extraction_succeeded")
-                else:
-                    _log_event("extraction_failed")
-        except Exception as e:
-            _log_event("extraction_warning", error=str(e))
-
-        # --- Phase 1: Code Generation + Execution with Retry ---
-        yield ("phase", {"phase": "generating", "message": "Writing analysis code..."})
-
-        result = None
-        schema_context_full = state.get_cached(filename, "schema_full")
-        if schema_context_full is None:
-            schema_context_full = data_service.get_schema_string(df, max_tokens=15000)
-            state.set_cached(filename, "schema_full", schema_context_full)
-
-        history_capped = history[-app_config.CHAT_HISTORY_CAP:] if history else []
-        generated_code, usage = gemini_service.generate_analysis_code(
-            message, schema_context_full, history_capped, profile_context, extracted_data_context
-        )
-        _record_and_log_usage(state, usage, "Code Gen")
-
-        if generated_code:
-            MAX_RETRIES = app_config.MAX_RETRIES
-            for attempt in range(1 + MAX_RETRIES):
-                code_to_run = generated_code if attempt == 0 else last_code
-                if code_to_run is None:
-                    break
-
-                attempt_label = "Initial" if attempt == 0 else f"Retry {attempt}/{MAX_RETRIES}"
-                yield ("phase", {"phase": "executing", "message": f"Running analysis ({attempt_label})..."})
-                _log_event("code_exec_started", attempt=attempt_label, chars=len(code_to_run))
-
-                try:
-                    exec_result = code_executor.execute_analysis_code(code_to_run, df)
-                    result = exec_result
-                    result["mode"] = "code_execution"
-                    _log_event("code_exec_succeeded", attempt=attempt_label)
-
-                    # Interpret results
-                    yield ("phase", {"phase": "interpreting", "message": "Interpreting results..."})
-                    _log_event("interpret_started")
-                    interpretation, usage = gemini_service.interpret_results(
-                        message, schema_context_full, exec_result, history_capped
-                    )
-                    _record_and_log_usage(state, usage, "Interpret")
-                    if interpretation:
-                        result["text"] = interpretation
-                        _log_event("interpret_succeeded")
-                    else:
-                        _log_event("interpret_failed")
-                    break
-                except CodeExecutionError as e:
-                    error_msg = str(e)
-                    _log_event("code_exec_failed", error=error_msg)
-
-                    if attempt < MAX_RETRIES:
-                        yield ("phase", {"phase": "retrying", "message": f"Fixing code (attempt {attempt + 1})..."})
-                        _log_event("retry_started", attempt=attempt + 1, max_retries=MAX_RETRIES)
-                        try:
-                            last_code, usage = gemini_service.retry_analysis_code(
-                                message, schema_context_full, code_to_run, error_msg,
-                                profile_context, extracted_data_context
-                            )
-                            _record_and_log_usage(state, usage, "Retry")
-                            if last_code:
-                                _log_event("retry_code_generated", chars=len(last_code))
-                            else:
-                                _log_event("retry_failed")
-                                break
-                        except LLMServiceError:
-                            _log_event("retry_failed")
-                            break
-                    else:
-                        _log_event("retry_exhausted")
-
-        # --- Fallback to text-based analysis ---
-        if result is None:
-            yield ("phase", {"phase": "fallback", "message": "Using text-based analysis..."})
-            _log_event("fallback_analysis_started")
-            data_context = data_service.get_context_string(df, max_rows=5)
-            result = gemini_service.analyse_data(message, data_context, history_capped)
-            _record_and_log_usage(state, result.get("usage"), "Fallback Text Analysis")
-            if result.get("error"):
-                yield ("error", {
-                    "error": True,
-                    "text": result.get("text", "AI service encountered an error."),
-                    "error_type": "gemini_error",
-                })
-                return
-            result["mode"] = "text_analysis"
-
-        result["cached"] = False
-
-        # Save to cache
-        state.query_cache.set(cache_key, result)
-
-        # Update chat history
-        chat_session_service.append_exchange(state, message, result)
-        _save_chat_history(user_id=user_id, state=state)
-
-        yield ("result", result)
-
-    except DataTalkError as e:
-        yield ("error", {
-            "error": True,
-            "text": e.message,
-            "error_type": e.error_type,
-            "status_code": e.status_code
-        })
-    except Exception as e:
-        yield ("error", {
-            "error": True,
-            "text": f"Error analysing data: {str(e)}",
-            "error_type": "analysis_error",
-            "status_code": 500
-        })
 
 
 # ==============================================================
@@ -809,7 +558,17 @@ def chat():
     message, filename, user_id, state, skip_cache = parsed
     usage_service.record_message_request(state, app_config.RATE_LIMIT)
 
-    for event_type, payload in _run_analysis_pipeline(message, filename, user_id, state, skip_cache):
+    for event_type, payload in run_analysis_pipeline(
+        message=message,
+        filename=filename,
+        user_id=user_id,
+        state=state,
+        skip_cache=skip_cache,
+        get_dataframe=_get_dataframe,
+        save_chat_history=_save_chat_history,
+        record_usage=_record_and_log_usage,
+        log_event=_log_event,
+    ):
         if event_type == "result":
             payload["session_id"] = state.active_session_id
             return jsonify(payload)
@@ -837,7 +596,17 @@ def chat_stream():
     usage_service.record_message_request(state, app_config.RATE_LIMIT)
 
     def generate():
-        for event_type, payload in _run_analysis_pipeline(message, filename, user_id, state, skip_cache):
+        for event_type, payload in run_analysis_pipeline(
+            message=message,
+            filename=filename,
+            user_id=user_id,
+            state=state,
+            skip_cache=skip_cache,
+            get_dataframe=_get_dataframe,
+            save_chat_history=_save_chat_history,
+            record_usage=_record_and_log_usage,
+            log_event=_log_event,
+        ):
             if event_type == "result":
                 payload["session_id"] = state.active_session_id
             yield _sse_event(event_type, payload)
@@ -1013,9 +782,9 @@ def get_dashboard():
     """Get the saved dashboard configuration for the active conversation session."""
     state = _get_user_state()
     try:
-        session_id = _resolve_requested_session_id(state)
-        config = _load_dashboard_store(g.user_id, session_id)
-        session_config = config.get("sessions", {}).get(session_id) or {"charts": [], "cards": []}
+        session_id = resolve_requested_session_id(state)
+        config = load_dashboard_store(g.user_id, session_id)
+        session_config = get_session_dashboard(config, session_id)
         return jsonify({
             "session_id": session_id,
             "charts": session_config.get("charts", []),
@@ -1042,15 +811,15 @@ def save_dashboard():
         raise ValidationError("Invalid dashboard payload")
 
     state = _get_user_state()
-    session_id = _resolve_requested_session_id(state, data)
+    session_id = resolve_requested_session_id(state, data)
 
     try:
-        config = _load_dashboard_store(g.user_id, session_id)
+        config = load_dashboard_store(g.user_id, session_id)
         config.setdefault("sessions", {})[session_id] = {
             "charts": charts,
             "cards": cards,
         }
-        _save_dashboard_store(g.user_id, config)
+        save_dashboard_store(g.user_id, config)
         return jsonify({"success": True, "session_id": session_id})
     except Exception as e:
         logger.error("Dashboard save failed to Supabase: %s", e)
@@ -1066,11 +835,11 @@ def pin_chart():
         return jsonify({"error": "No chart data provided"}), 400
 
     state = _get_user_state()
-    session_id = _resolve_requested_session_id(state, data)
+    session_id = resolve_requested_session_id(state, data)
 
     try:
-        config = _load_dashboard_store(g.user_id, session_id)
-        session_config = config.setdefault("sessions", {}).setdefault(session_id, {"charts": [], "cards": []})
+        config = load_dashboard_store(g.user_id, session_id)
+        session_config = get_session_dashboard(config, session_id)
         charts_list = session_config.get("charts", [])
         if not isinstance(charts_list, list):
             charts_list = []
@@ -1086,7 +855,7 @@ def pin_chart():
         session_config["charts"] = charts_list
         config["sessions"][session_id] = session_config
 
-        _save_dashboard_store(g.user_id, config)
+        save_dashboard_store(g.user_id, config)
 
         return jsonify({"success": True, "chart_id": new_chart["id"], "session_id": session_id})
 
@@ -1103,13 +872,13 @@ def remove_chart(chart_id):
     """Remove a chart from the active session dashboard."""
     state = _get_user_state()
     try:
-        session_id = _resolve_requested_session_id(state)
-        config = _load_dashboard_store(g.user_id, session_id)
-        session_config = config.setdefault("sessions", {}).setdefault(session_id, {"charts": [], "cards": []})
+        session_id = resolve_requested_session_id(state)
+        config = load_dashboard_store(g.user_id, session_id)
+        session_config = get_session_dashboard(config, session_id)
         session_config["charts"] = [c for c in session_config.get("charts", []) if c.get("id") != chart_id]
         config["sessions"][session_id] = session_config
 
-        _save_dashboard_store(g.user_id, config)
+        save_dashboard_store(g.user_id, config)
 
         return jsonify({"success": True, "session_id": session_id})
 
