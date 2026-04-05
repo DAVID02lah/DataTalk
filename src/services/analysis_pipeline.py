@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-import app_config
-import chat_session_service
-import code_executor
-import data_service
-import gemini_service
-from errors import CodeExecutionError, DataTalkError, LLMServiceError
+from src.core import app_config
+from src.services import chat_session_service
+from src.services import code_executor
+from src.services import data_service
+from src.services import gemini_service
+from src.core.errors import CodeExecutionError, DataTalkError, LLMServiceError
 
 
 def _build_cache_key(filename: str, message: str) -> str:

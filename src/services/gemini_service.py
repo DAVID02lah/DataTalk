@@ -12,7 +12,7 @@ import logging
 import re
 from google import genai
 from dotenv import load_dotenv
-from errors import LLMServiceError
+from src.core.errors import LLMServiceError
 
 load_dotenv()
 

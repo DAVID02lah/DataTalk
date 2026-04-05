@@ -239,28 +239,22 @@
         </section>
     </div>
 
+    <script src="js/auth-client.js"></script>
     <script>
         const API_BASE = window.location.origin;
 
         function getAuthHeaders(extra = {}) {
-            const token = localStorage.getItem("dt_access_token");
-            return {
-                "Authorization": token ? `Bearer ${token}` : "",
-                ...extra,
-            };
+            if (window.AuthClient && typeof window.AuthClient.getAuthHeaders === "function") {
+                return window.AuthClient.getAuthHeaders(extra);
+            }
+            return { ...extra };
         }
 
         function signOut() {
-            const token = localStorage.getItem("dt_access_token");
-            if (token) {
-                fetch(`${API_BASE}/api/auth/logout`, {
-                    method: "POST",
-                    headers: getAuthHeaders(),
-                }).catch(() => { });
+            if (window.AuthClient && typeof window.AuthClient.signOut === "function") {
+                window.AuthClient.signOut();
+                return;
             }
-            localStorage.removeItem("dt_access_token");
-            localStorage.removeItem("dt_refresh_token");
-            localStorage.removeItem("dt_user");
             window.location.href = "login.html";
         }
 
@@ -292,10 +286,13 @@
         }
 
         async function ensureSession() {
-            const token = localStorage.getItem("dt_access_token");
-            if (!token) {
-                window.location.href = "login.html";
-                return null;
+            if (window.AuthClient && typeof window.AuthClient.getSession === "function") {
+                const user = await window.AuthClient.getSession();
+                if (!user) {
+                    window.location.href = "login.html";
+                    return null;
+                }
+                return user;
             }
 
             const response = await fetch(`${API_BASE}/api/auth/session`, {
@@ -312,7 +309,6 @@
                 return null;
             }
 
-            localStorage.setItem("dt_user", JSON.stringify(data.user));
             return data.user;
         }
 
@@ -344,13 +340,17 @@
                     throw new Error(data.error || "Failed to save profile.");
                 }
 
-                const currentUser = JSON.parse(localStorage.getItem("dt_user") || "{}");
+                const currentUser = (window.AuthClient && typeof window.AuthClient.getCachedUser === "function")
+                    ? (window.AuthClient.getCachedUser() || {})
+                    : {};
                 const nextUser = {
                     ...currentUser,
                     display_name: data.profile?.display_name || displayName,
                     avatar_initials: data.profile?.avatar_initials || avatarInitials(displayName),
                 };
-                localStorage.setItem("dt_user", JSON.stringify(nextUser));
+                if (window.AuthClient && typeof window.AuthClient.setCachedUser === "function") {
+                    window.AuthClient.setCachedUser(nextUser);
+                }
                 hydrateProfile(nextUser);
                 setStatus("Profile updated successfully.", "success");
             } catch (error) {

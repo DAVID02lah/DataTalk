@@ -47,6 +47,22 @@ function applyDashboardPayload(data) {
     App.state.dashboardLoaded = true;
 }
 
+let dashboardRefreshPromise = null;
+let smartQuestionsRequest = null;
+
+function appendPinnedChartToState(chart) {
+    if (!chart || !chart.id) return;
+    if (!Array.isArray(App.state.dashboardCharts)) {
+        App.state.dashboardCharts = [];
+    }
+
+    const exists = App.state.dashboardCharts.some((item) => item && item.id === chart.id);
+    if (exists) return;
+
+    App.state.dashboardCharts.push(chart);
+    App.state.dashboardLoaded = true;
+}
+
 function chartLayoutFromGridPos(index, gridPos = {}) {
     return {
         x: gridPos.x ?? (index % 2) * 6,
@@ -109,8 +125,10 @@ async function pinChart(chartId, title) {
         assertDashboardApiSuccess(response, result, "Failed to pin chart.", { requireSuccessFlag: true });
         updatePinnedChartButton(chartDiv);
 
+        appendPinnedChartToState(result.chart);
+
         if (isVisualsViewActive()) {
-            refreshDashboard();
+            renderDashboardGrid();
         }
     } catch (error) {
         appendErrorMessage(error.message || "Error pinning chart. Is the backend running?");
@@ -133,7 +151,18 @@ function downloadChart(chartId) {
 // ============================================================
 // Smart Questions (after file upload)
 // ============================================================
-async function fetchSmartQuestions() {
+async function fetchSmartQuestions(options = {}) {
+    const { force = false } = options;
+    const activeFilename = String(App.state.activeFile?.filename || "").trim();
+
+    if (!force && activeFilename && App.state.lastSuggestedQuestionsFile === activeFilename) {
+        return;
+    }
+    if (smartQuestionsRequest) {
+        return smartQuestionsRequest;
+    }
+
+    smartQuestionsRequest = (async () => {
     try {
         const response = await fetch(`${App.API_BASE}/api/suggest-questions`, {
             headers: App.getAuthHeaders()
@@ -148,9 +177,16 @@ async function fetchSmartQuestions() {
                 `<div class="suggestion-chip" onclick="useSuggestion(this)">${escapeHtml(q)}</div>`
             ).join("");
         }
+
+        App.state.lastSuggestedQuestionsFile = activeFilename || null;
     } catch (e) {
         console.log("Could not fetch smart questions:", e.message);
+    } finally {
+        smartQuestionsRequest = null;
     }
+    })();
+
+    return smartQuestionsRequest;
 }
 
 
@@ -378,17 +414,37 @@ function initDashboardGridStack() {
 // ============================================================
 
 async function refreshDashboard() {
+    if (App.state.dashboardLoaded) {
+        renderDashboardGrid();
+        return {
+            charts: App.state.dashboardCharts || [],
+            cards: App.state.dashboardCards || [],
+        };
+    }
+
+    if (dashboardRefreshPromise) {
+        return dashboardRefreshPromise;
+    }
+
+    dashboardRefreshPromise = (async () => {
     try {
         const { data } = await fetchDashboardApiJson(withDashboardSession(`${App.API_BASE}/api/dashboard`), {
             headers: App.getAuthHeaders()
         });
         applyDashboardPayload(data);
         renderDashboardGrid();
+        return data;
     } catch (e) {
         console.error("Failed to load dashboard:", e);
         applyDashboardPayload({ charts: [], cards: [] });
         renderDashboardGrid();
+        return null;
+    } finally {
+        dashboardRefreshPromise = null;
     }
+    })();
+
+    return dashboardRefreshPromise;
 }
 
 function renderDashboardGrid() {
@@ -582,14 +638,32 @@ function resizeDashboardOnActivate() {
 // Dashboard: Remove, Download, Clear
 // ============================================================
 
+/** Remove a single chart widget after explicit user confirmation. */
 async function removeDashChart(chartId) {
+    let confirmed = true;
+    if (window.UIUtils && typeof window.UIUtils.confirm === "function") {
+        confirmed = await window.UIUtils.confirm({
+            title: "Remove chart",
+            message: "This chart widget will be removed from the dashboard.",
+            confirmText: "Remove",
+            danger: true,
+        });
+    } else {
+        showAppError("Confirmation dialog is unavailable right now. Please refresh and try again.");
+        return;
+    }
+    if (!confirmed) return;
+
     try {
         const { response, data } = await fetchDashboardApiJson(withDashboardSession(`${App.API_BASE}/api/dashboard/remove/${chartId}`), {
             method: "DELETE",
             headers: App.getAuthHeaders()
         });
         assertDashboardApiSuccess(response, data, "Failed to remove chart.", { requireSuccessFlag: true });
-        refreshDashboard();
+
+        App.state.dashboardCharts = (App.state.dashboardCharts || []).filter((chart) => chart?.id !== chartId);
+        App.state.dashboardLoaded = true;
+        renderDashboardGrid();
     } catch (e) {
         showAppError(e.message || "Error removing chart.");
         console.error(e);
@@ -608,11 +682,28 @@ function downloadDashChart(plotId) {
     }
 }
 
+/** Remove all dashboard widgets in the active conversation context. */
 async function clearAllCharts() {
-    if (!confirm("Remove all widgets from the dashboard?")) return;
+    let confirmed = true;
+    if (window.UIUtils && typeof window.UIUtils.confirm === "function") {
+        confirmed = await window.UIUtils.confirm({
+            title: "Clear dashboard",
+            message: "All chart and card widgets in this conversation dashboard will be removed.",
+            confirmText: "Clear all",
+            danger: true,
+        });
+    } else {
+        showAppError("Confirmation dialog is unavailable right now. Please refresh and try again.");
+        return;
+    }
+    if (!confirmed) return;
+
     try {
         await persistDashboardState([], []);
-        refreshDashboard();
+        App.state.dashboardCharts = [];
+        App.state.dashboardCards = [];
+        App.state.dashboardLoaded = true;
+        renderDashboardGrid();
     } catch (e) {
         showAppError(e.message || "Error clearing dashboard.");
         console.error(e);
@@ -637,6 +728,7 @@ function clearDashboard() {
 // Chart Customizer Panel
 // ============================================================
 
+/** Open the chart customizer and hydrate controls from the selected Plotly chart. */
 function openChartCustomizer(chartId) {
     activeCustomizerChartId = chartId;
     const panel = document.getElementById('chart-customizer');
@@ -679,11 +771,17 @@ function openChartCustomizer(chartId) {
             const name = trace.name || `Trace ${i + 1}`;
             return `
                 <div class="color-picker-row">
-                    <input type="color" value="${color}" onchange="applyTraceColor(${i}, this.value)">
+                    <input type="color" value="${color}" data-trace-index="${i}">
                     <span>${escapeHtml(name)}</span>
                 </div>
             `;
         }).join('');
+
+        colorDiv.querySelectorAll('input[type="color"]').forEach((inputEl) => {
+            const traceIndex = Number(inputEl.dataset.traceIndex || "0");
+            inputEl.addEventListener("input", () => applyTraceColor(traceIndex, inputEl.value));
+            inputEl.addEventListener("change", () => applyTraceColor(traceIndex, inputEl.value));
+        });
     }
 }
 
@@ -716,13 +814,33 @@ function applyCustomTitle() {
     }
 }
 
+/** Apply a trace color update immediately so users see live preview while dragging the color picker. */
 function applyTraceColor(traceIndex, color) {
     if (!activeCustomizerChartId) return;
     const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
     if (!plotEl || typeof Plotly === 'undefined') return;
 
     try {
-        Plotly.restyle(plotEl, { 'marker.color': color, 'line.color': color }, [traceIndex]);
+        const trace = plotEl.data?.[traceIndex] || {};
+
+        if (!trace.marker) {
+            trace.marker = {};
+        }
+
+        if (Array.isArray(trace.marker.color)) {
+            trace.marker.color = trace.marker.color.map(() => color);
+        } else {
+            trace.marker.color = color;
+        }
+
+        if (trace.line) {
+            trace.line.color = color;
+        }
+        if (trace.fillcolor) {
+            trace.fillcolor = color;
+        }
+
+        Plotly.redraw(plotEl);
     } catch (e) {
         console.error('Failed to update color:', e);
     }

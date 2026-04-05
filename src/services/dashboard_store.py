@@ -7,11 +7,13 @@ route handlers can stay focused on request/response concerns.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import time
 from typing import Any
 
-import auth_service
-import chat_session_service
-from errors import ValidationError
+from src.core import app_config
+from src.services import auth_service
+from src.services import chat_session_service
+from src.core.errors import ValidationError
 
 _DASHBOARD_STORE_VERSION = 2
 
@@ -94,15 +96,37 @@ def resolve_requested_session_id(
     return str(active.get("id") or "")
 
 
-def load_dashboard_store(user_id: str, session_id: str) -> dict[str, Any]:
+def _is_dashboard_cache_fresh(state) -> bool:
+    if state is None:
+        return False
+    cache = getattr(state, "dashboard_store_cache", None)
+    cached_at = getattr(state, "dashboard_store_cached_at", None)
+    if not isinstance(cache, dict) or not isinstance(cached_at, (int, float)):
+        return False
+
+    ttl_seconds = max(1, int(app_config.DASHBOARD_STORE_CACHE_TTL_SECONDS or 1))
+    return (time.time() - float(cached_at)) <= ttl_seconds
+
+
+def load_dashboard_store(user_id: str, session_id: str, state=None) -> dict[str, Any]:
     """Read dashboard config and always return normalized structure."""
+    if _is_dashboard_cache_fresh(state):
+        cached_store = getattr(state, "dashboard_store_cache", None)
+        return normalise_dashboard_store(cached_store, session_id)
+
     sb_service = auth_service.get_supabase_service()
     result = sb_service.table("dashboard_configs").select("config").eq("user_id", user_id).execute()
     raw_config = result.data[0]["config"] if (result.data and len(result.data) > 0) else {}
-    return normalise_dashboard_store(raw_config, session_id)
+    store = normalise_dashboard_store(raw_config, session_id)
+
+    if state is not None:
+        state.dashboard_store_cache = store
+        state.dashboard_store_cached_at = time.time()
+
+    return store
 
 
-def save_dashboard_store(user_id: str, config: dict[str, Any]) -> None:
+def save_dashboard_store(user_id: str, config: dict[str, Any], state=None) -> None:
     """Persist normalized store so all readers observe one canonical format."""
     sb_service = auth_service.get_supabase_service()
     sb_service.table("dashboard_configs").upsert({
@@ -110,6 +134,10 @@ def save_dashboard_store(user_id: str, config: dict[str, Any]) -> None:
         "config": config,
         "updated_at": "now()",
     }, on_conflict="user_id").execute()
+
+    if state is not None:
+        state.dashboard_store_cache = config
+        state.dashboard_store_cached_at = time.time()
 
 
 def get_session_dashboard(config: Mapping[str, Any], session_id: str) -> dict[str, list[Any]]:

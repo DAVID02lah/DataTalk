@@ -11,7 +11,7 @@ import threading
 import time
 from collections import deque
 
-import app_config
+from src.core import app_config
 
 
 class QueryCache:
@@ -54,6 +54,8 @@ class UserState:
         self.chat_sessions: list[dict[str, object]] = []
         self.active_session_id: str | None = None
         self.active_file: dict[str, str | None] = {"filename": None}
+        self.dashboard_store_cache: dict[str, object] | None = None
+        self.dashboard_store_cached_at: float | None = None
         self.usage_totals: dict[str, object] = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -65,6 +67,8 @@ class UserState:
         self.message_request_times = deque(maxlen=300)
         self.query_cache = QueryCache(max_items=app_config.QUERY_CACHE_SIZE)
         self._file_cache: dict[str, dict] = {}
+        self._file_locks: dict[str, threading.Lock] = {}
+        self._file_locks_guard = threading.Lock()
 
     def get_cached(self, filename, key):
         """Get a cached computation for a file, or None."""
@@ -79,6 +83,15 @@ class UserState:
     def clear_file_cache(self):
         """Invalidate all cached file computations."""
         self._file_cache.clear()
+
+    def get_file_lock(self, filename):
+        """Return a stable lock object for a dataset path to dedupe concurrent loads."""
+        with self._file_locks_guard:
+            lock = self._file_locks.get(filename)
+            if lock is None:
+                lock = threading.Lock()
+                self._file_locks[filename] = lock
+            return lock
 
 
 class SessionManager:

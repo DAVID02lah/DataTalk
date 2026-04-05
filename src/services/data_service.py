@@ -8,8 +8,8 @@ import io
 import warnings
 import pandas as pd
 from werkzeug.utils import secure_filename
-import auth_service
-from errors import DatasetNotFoundError, ValidationError, DataProcessingError
+from src.services import auth_service
+from src.core.errors import DatasetNotFoundError, ValidationError, DataProcessingError
 
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 
@@ -86,6 +86,126 @@ def save_uploaded_file(file_storage, user_id=None, filename_override=None):
     return relative_path, storage_path
 
 
+def load_uploaded_dataframe(file_storage, filename):
+    """
+    Parse an uploaded Flask FileStorage into a DataFrame without re-downloading from storage.
+    """
+    relative_path = _normalize_relative_path(filename, allow_empty=False)
+    ext = os.path.splitext(relative_path)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValidationError(f"Unsupported file type: {ext}")
+
+    try:
+        file_storage.seek(0)
+    except Exception:
+        # Some storage wrappers may not expose seek reliably.
+        pass
+
+    file_bytes = file_storage.read()
+    if not file_bytes:
+        raise ValidationError("Uploaded file is empty.")
+
+    buffer = io.BytesIO(file_bytes)
+    if ext == ".csv":
+        return pd.read_csv(buffer)
+    if ext in (".xlsx", ".xls"):
+        return pd.read_excel(buffer, engine="openpyxl")
+
+    raise ValidationError(f"Unsupported file type: {ext}")
+
+
+def save_dataframe(filename, df, user_id=None):
+    """
+    Persist a pandas DataFrame back to Supabase Storage using the original file extension.
+    Returns the normalized relative path and storage path.
+    """
+    relative_path = _normalize_relative_path(filename, allow_empty=False)
+    ext = os.path.splitext(relative_path)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValidationError(f"Unsupported file type: {ext}")
+
+    df_to_save = df.copy()
+    df_to_save.columns = [str(col) for col in df_to_save.columns]
+
+    if ext == ".csv":
+        file_buffer = io.BytesIO(df_to_save.to_csv(index=False).encode("utf-8"))
+        content_type = "text/csv"
+    else:
+        file_buffer = io.BytesIO()
+        with pd.ExcelWriter(file_buffer, engine="openpyxl") as writer:
+            df_to_save.to_excel(writer, index=False)
+        file_buffer.seek(0)
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    bucket = get_dataset_bucket()
+    storage_path = _build_storage_path(relative_path, user_id=user_id)
+    bucket.upload(
+        path=storage_path,
+        file=file_buffer.getvalue(),
+        file_options={
+            "upsert": "true",
+            "content-type": content_type,
+        },
+    )
+    return relative_path, storage_path
+
+
+def list_user_files(user_id=None, limit=100):
+    """
+    List uploaded dataset files for a user, returning normalized relative paths.
+    """
+    bucket = get_dataset_bucket()
+    max_results = max(1, min(int(limit or 100), 500))
+    user_prefix = secure_filename(str(user_id)) if user_id else ""
+
+    try:
+        entries = bucket.list(
+            user_prefix,
+            {
+                "limit": max_results,
+                "offset": 0,
+                "sortBy": {"column": "name", "order": "asc"},
+            },
+        )
+    except TypeError:
+        # Older Supabase clients may not accept options as a second argument.
+        entries = bucket.list(user_prefix)
+    except Exception as e:
+        raise DataProcessingError(f"Failed to list files: {e}")
+
+    results = []
+    seen = set()
+    prefix_with_slash = f"{user_prefix}/" if user_prefix else ""
+
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").replace("\\", "/").strip("/")
+        if not name:
+            continue
+
+        if prefix_with_slash and name.startswith(prefix_with_slash):
+            relative = name[len(prefix_with_slash):]
+        else:
+            relative = name
+
+        ext = os.path.splitext(relative)[1].lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            continue
+
+        try:
+            normalized = _normalize_relative_path(relative, allow_empty=False)
+        except ValidationError:
+            continue
+
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        results.append(normalized)
+
+    return results
+
+
 def load_file(filename, user_id=None):
     """
     Load a CSV or Excel file from Supabase Storage into a pandas DataFrame.
@@ -116,7 +236,7 @@ def load_file(filename, user_id=None):
         raise DatasetNotFoundError(f"Failed to load file '{relative_path}' from storage: {e}")
 
 
-def get_summary(df):
+def get_summary(df, include_describe=False):
     """
     Return a summary dict of the DataFrame: columns, dtypes, shape, and basic stats.
     """
@@ -128,16 +248,17 @@ def get_summary(df):
         "describe": {}
     }
 
-    # Add describe() for numeric columns
-    try:
-        desc = df.describe(include="all").fillna("").to_dict()
-        # Convert numpy types to native Python types for JSON serialization
-        clean_desc = {}
-        for col, stats in desc.items():
-            clean_desc[col] = {k: _to_native(v) for k, v in stats.items()}
-        summary["describe"] = clean_desc
-    except Exception:
-        pass
+    # describe(include="all") can dominate request latency on wider datasets,
+    # so callers opt-in only where deep stats are actually needed.
+    if include_describe:
+        try:
+            desc = df.describe(include="all").fillna("").to_dict()
+            clean_desc = {}
+            for col, stats in desc.items():
+                clean_desc[col] = {k: _to_native(v) for k, v in stats.items()}
+            summary["describe"] = clean_desc
+        except Exception:
+            pass
 
     return summary
 

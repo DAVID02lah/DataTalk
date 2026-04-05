@@ -220,27 +220,17 @@
         </div>
     </div>
 
+    <script src="js/auth-client.js"></script>
     <script>
         const API_BASE = window.location.origin;
         let isSignUp = false;
 
         // Check if already logged in
         (async function checkExistingSession() {
-            const token = localStorage.getItem('dt_access_token');
-            if (!token) return;
-            try {
-                const res = await fetch(`${API_BASE}/api/auth/session`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (res.ok) {
-                    window.location.href = 'dashboard.html';
-                } else {
-                    localStorage.removeItem('dt_access_token');
-                    localStorage.removeItem('dt_refresh_token');
-                    localStorage.removeItem('dt_user');
-                }
-            } catch {
-                // Network error — stay on login page
+            if (!window.AuthClient || typeof window.AuthClient.getSession !== 'function') return;
+            const user = await window.AuthClient.getSession();
+            if (user) {
+                window.location.href = 'dashboard.html';
             }
         })();
 
@@ -333,16 +323,15 @@
                     return;
                 }
 
-                if (data.access_token) {
-                    localStorage.setItem('dt_access_token', data.access_token);
-                    localStorage.setItem('dt_refresh_token', data.refresh_token || '');
-                    localStorage.setItem('dt_user', JSON.stringify(data.user));
-
+                if (data.success && !data.email_confirmation_required) {
+                    if (window.AuthClient && typeof window.AuthClient.setCachedUser === 'function') {
+                        window.AuthClient.setCachedUser(data.user || null);
+                    }
                     showSuccess(isSignUp ? 'Account created! Redirecting...' : 'Success! Redirecting...');
                     setTimeout(() => {
                         window.location.href = 'dashboard.html';
                     }, 500);
-                } else if (isSignUp) {
+                } else if (isSignUp && data.email_confirmation_required) {
                     // Email confirmation required
                     showSuccess('Account created! Please check your email to verify your account, then sign in.');
                     btn.disabled = false;

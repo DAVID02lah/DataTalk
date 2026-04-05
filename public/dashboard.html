@@ -144,6 +144,12 @@
                 <!-- =================== DATA VIEW =================== -->
                 <div id="view-data" class="view-section">
                     <div id="upload-success-banner" style="display: none;"></div>
+                    <div class="data-editor-toolbar" id="data-editor-toolbar" style="display: none;">
+                        <div class="data-save-status" id="data-save-status">No unsaved changes.</div>
+                        <button class="btn btn-primary" id="save-data-btn" onclick="saveDatasetChanges()" disabled>
+                            Save Changes
+                        </button>
+                    </div>
                     <div id="upload-container" class="empty-state">
                         <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="48" height="48"
                             viewBox="0 0 24 24" fill="none" stroke="#4285f4" stroke-width="1.5" stroke-linecap="round"
@@ -365,8 +371,67 @@
         </div>
     </div>
 
+    <!-- New Conversation Source Modal -->
+    <div class="chart-fullscreen-overlay" id="new-conversation-modal" style="display: none;" role="dialog"
+        aria-modal="true" aria-label="Create new conversation">
+        <div class="chart-fullscreen-container modal-compact">
+            <button class="close-fullscreen" onclick="closeNewConversationModal()" aria-label="Close Modal">×</button>
+            <h3 class="modal-title">Create New Conversation</h3>
+            <p class="modal-subtitle">Choose which dataset this conversation should use.</p>
+
+            <div class="modal-choice-group">
+                <label class="modal-choice-row" id="new-conversation-choice-current-wrap">
+                    <input type="radio" name="new-conversation-source" value="current" id="new-conversation-choice-current">
+                    <span>Use current dataset</span>
+                </label>
+
+                <label class="modal-choice-row" id="new-conversation-choice-existing-wrap">
+                    <input type="radio" name="new-conversation-source" value="existing" id="new-conversation-choice-existing">
+                    <span>Use another uploaded dataset</span>
+                </label>
+
+                <select id="new-conversation-existing-file" class="modal-select" disabled>
+                    <option value="">No uploaded files found</option>
+                </select>
+
+                <label class="modal-choice-row">
+                    <input type="radio" name="new-conversation-source" value="blank" id="new-conversation-choice-blank">
+                    <span>Start blank and upload a new dataset</span>
+                </label>
+
+                <label class="modal-checkbox-row" id="new-conversation-upload-now-wrap" style="display: none;">
+                    <input type="checkbox" id="new-conversation-upload-now" checked>
+                    <span>Open Data Connector and prompt upload immediately</span>
+                </label>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-dashboard-action" onclick="closeNewConversationModal()">Cancel</button>
+                <button class="btn-dashboard-action btn-dashboard-primary" id="new-conversation-confirm-btn"
+                    onclick="submitNewConversationSelection()">Create</button>
+            </div>
+            <div id="new-conversation-error" class="modal-error-text" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- Shared Confirmation Modal -->
+    <div class="chart-fullscreen-overlay" id="confirm-modal" style="display: none;" role="dialog" aria-modal="true"
+        aria-label="Confirm action">
+        <div class="chart-fullscreen-container modal-compact">
+            <button class="close-fullscreen" id="confirm-modal-close" aria-label="Close Modal">×</button>
+            <h3 class="modal-title" id="confirm-modal-title">Confirm</h3>
+            <p class="modal-subtitle" id="confirm-modal-message">Are you sure you want to continue?</p>
+            <div class="modal-actions">
+                <button class="btn-dashboard-action" id="confirm-modal-cancel">Cancel</button>
+                <button class="btn-dashboard-action btn-dashboard-primary" id="confirm-modal-confirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
     <script src="js/constants.js"></script>
+    <script src="js/auth-client.js"></script>
+    <script src="js/ui-utils.js"></script>
     <script src="js/core.js"></script>
     <script src="js/data-chat.js"></script>
     <script src="js/dashboard-ui.js"></script>

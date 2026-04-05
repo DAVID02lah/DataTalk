@@ -14,8 +14,8 @@ import traceback
 import numpy as np
 import pandas as pd
 
-import app_config
-from errors import CodeExecutionError
+from src.core import app_config
+from src.core.errors import CodeExecutionError
 
 EXEC_TIMEOUT = app_config.EXEC_TIMEOUT
 MAX_CODE_LENGTH = 10000

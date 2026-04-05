@@ -24,24 +24,29 @@ const App = {
         progressPhaseIndex: 0,      // Current progress phase
         chatSessions: [],           // Conversation session summaries
         activeSessionId: null,      // Active conversation session id
+        maxChatSessions: 2,         // Backend-configured conversation cap
     },
 
-    /** Return headers object with the Bearer token for authenticated API requests. */
+    /** Return common headers for authenticated API requests. */
     getAuthHeaders(extra = {}) {
-        const token = localStorage.getItem('dt_access_token');
-        return {
-            'Authorization': token ? `Bearer ${token}` : '',
-            ...extra
-        };
+        if (window.AuthClient && typeof window.AuthClient.getAuthHeaders === "function") {
+            return window.AuthClient.getAuthHeaders(extra);
+        }
+        return { ...extra };
     },
 
     /** Validate the stored session token; redirect to login if invalid. */
     async checkSession() {
-        const token = localStorage.getItem('dt_access_token');
-        if (!token) {
-            window.location.href = 'login.html';
-            return false;
+        if (window.AuthClient && typeof window.AuthClient.getSession === "function") {
+            const user = await window.AuthClient.getSession();
+            if (!user) {
+                window.location.href = "login.html";
+                return false;
+            }
+            App.loadUserProfile(user);
+            return true;
         }
+
         try {
             const res = await fetch(`${App.API_BASE}/api/auth/session`, {
                 headers: App.getAuthHeaders()
@@ -63,25 +68,25 @@ const App = {
 
     /** Clear stored auth data and redirect to login page. */
     signOut() {
-        const token = localStorage.getItem('dt_access_token');
-        if (token) {
-            fetch(`${App.API_BASE}/api/auth/logout`, {
-                method: 'POST',
-                headers: App.getAuthHeaders()
-            }).catch(() => { });
+        if (window.AuthClient && typeof window.AuthClient.signOut === "function") {
+            window.AuthClient.signOut();
+            return;
         }
-        localStorage.removeItem('dt_access_token');
-        localStorage.removeItem('dt_refresh_token');
-        localStorage.removeItem('dt_user');
-        window.location.href = 'login.html';
+
+        fetch(`${App.API_BASE}/api/auth/logout`, {
+            method: 'POST',
+            headers: App.getAuthHeaders()
+        }).catch(() => { }).finally(() => {
+            window.location.href = 'login.html';
+        });
     },
 
     /** Update the UI with the authenticated user's profile info. */
     loadUserProfile(user) {
         const nameEl = document.querySelector('.user-profile .user-name');
         const initialsEl = document.querySelector('.user-profile .user-avatar');
-        if (user && typeof user === 'object') {
-            localStorage.setItem('dt_user', JSON.stringify(user));
+        if (window.AuthClient && user && typeof user === "object") {
+            window.AuthClient.setCachedUser(user);
         }
         if (nameEl && user.display_name) {
             nameEl.textContent = user.display_name;

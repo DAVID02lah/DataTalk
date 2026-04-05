@@ -459,3 +459,77 @@
     width: 100%;
     height: calc(100% - 20px);
 }
+
+.modal-compact {
+    max-width: 520px;
+    height: auto;
+    min-height: 220px;
+    padding: 24px;
+}
+
+.modal-title {
+    margin: 0;
+    color: var(--text-color);
+    font-size: 1.1rem;
+}
+
+.modal-subtitle {
+    margin: 8px 0 0;
+    color: var(--text-light);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.modal-choice-group {
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.modal-choice-row,
+.modal-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    color: var(--text-color);
+}
+
+.modal-select {
+    width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--surface-secondary);
+    color: var(--text-color);
+    font-size: 0.88rem;
+    padding: 9px 10px;
+}
+
+.modal-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.modal-actions {
+    margin-top: 18px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.modal-error-text {
+    margin-top: 10px;
+    color: #b42318;
+    font-size: 0.82rem;
+}
+
+.btn-dashboard-action.btn-dashboard-danger {
+    border-color: rgba(234, 67, 53, 0.35);
+    color: #ea4335;
+}
+
+.btn-dashboard-action.btn-dashboard-danger:hover {
+    background: rgba(234, 67, 53, 0.08);
+    border-color: #ea4335;
+}

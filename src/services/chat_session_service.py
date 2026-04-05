@@ -68,6 +68,71 @@ def create_session(filename: str | None, title: str | None = None) -> dict[str, 
     }
 
 
+def _session_updated_at(session: dict[str, Any]) -> str:
+    return str(session.get("updated_at") or "")
+
+
+def _sorted_sessions_by_recent(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(sessions, key=_session_updated_at, reverse=True)
+
+
+def enforce_session_limit(state, max_sessions: int) -> None:
+    """Keep only the most relevant sessions so runtime memory remains bounded."""
+    max_sessions = max(1, int(max_sessions or 1))
+
+    sessions = getattr(state, "chat_sessions", None)
+    if not isinstance(sessions, list):
+        state.chat_sessions = []
+        state.active_session_id = None
+        state.chat_history = []
+        return
+
+    if len(sessions) <= max_sessions:
+        return
+
+    active_session_id = getattr(state, "active_session_id", None)
+    ordered_sessions = _sorted_sessions_by_recent(sessions)
+
+    kept_sessions: list[dict[str, Any]] = []
+    if active_session_id:
+        active_session = next(
+            (session for session in ordered_sessions if session.get("id") == active_session_id),
+            None,
+        )
+        if active_session is not None:
+            kept_sessions.append(active_session)
+
+    for session in ordered_sessions:
+        if len(kept_sessions) >= max_sessions:
+            break
+        if any(existing.get("id") == session.get("id") for existing in kept_sessions):
+            continue
+        kept_sessions.append(session)
+
+    state.chat_sessions = kept_sessions
+
+    if not kept_sessions:
+        state.active_session_id = None
+        state.chat_history = []
+        if isinstance(getattr(state, "active_file", None), dict):
+            state.active_file["filename"] = None
+        return
+
+    kept_ids = {session.get("id") for session in kept_sessions}
+    if state.active_session_id not in kept_ids:
+        state.active_session_id = kept_sessions[0].get("id")
+
+    active_session = set_active_session(state, state.active_session_id or "")
+    if active_session is None:
+        active_session = kept_sessions[0]
+        state.active_session_id = active_session.get("id")
+        state.chat_history = _clean_messages(active_session.get("messages"))
+        active_session["messages"] = state.chat_history
+
+    if isinstance(getattr(state, "active_file", None), dict):
+        state.active_file["filename"] = active_session.get("filename")
+
+
 def ensure_active_session(state, filename: str | None = None, force_new: bool = False) -> dict[str, Any]:
     """Ensure state has an active conversation session and return it."""
     if not hasattr(state, "chat_sessions") or not isinstance(state.chat_sessions, list):
