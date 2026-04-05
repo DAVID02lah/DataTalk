@@ -2,6 +2,167 @@
 // ============================================================
 
 let usageRefreshTimer = null;
+let defaultUploadContainerMarkup = null;
+let lastUsageSummaryAt = 0;
+
+const USAGE_SUMMARY_MIN_INTERVAL_MS = 30_000;
+const USAGE_SUMMARY_POLL_INTERVAL_MS = 60_000;
+
+function captureDefaultUploadMarkup() {
+    if (defaultUploadContainerMarkup !== null) return;
+    const uploadContainer = document.getElementById("upload-container");
+    if (!uploadContainer) return;
+    defaultUploadContainerMarkup = uploadContainer.innerHTML;
+}
+
+function restoreUploadContainerMarkup() {
+    const uploadContainer = document.getElementById("upload-container");
+    if (!uploadContainer || defaultUploadContainerMarkup === null) return;
+
+    uploadContainer.innerHTML = defaultUploadContainerMarkup;
+
+    const fileInput = uploadContainer.querySelector("#file-input");
+    const browseBtn = uploadContainer.querySelector("#browse-file-btn");
+    if (fileInput) {
+        fileInput.addEventListener("change", function () {
+            handleFileUpload(this.files);
+        });
+    }
+    if (browseBtn && fileInput) {
+        browseBtn.addEventListener("click", () => {
+            fileInput.click();
+        });
+    }
+}
+
+/** Toggle visibility of the Data Connector save toolbar. */
+function setDataEditorVisibility(isVisible) {
+    const toolbar = document.getElementById("data-editor-toolbar");
+    if (!toolbar) return;
+    toolbar.style.display = isVisible ? "flex" : "none";
+}
+
+/** Update the save status indicator to reflect dirty/saving/saved/error states. */
+function setDataSaveStatus(state, message = "") {
+    const statusEl = document.getElementById("data-save-status");
+    const saveBtn = document.getElementById("save-data-btn");
+    if (!statusEl || !saveBtn) return;
+
+    statusEl.classList.remove("is-dirty", "is-saving", "is-saved", "is-error");
+
+    if (state === "hidden") {
+        setDataEditorVisibility(false);
+        saveBtn.disabled = true;
+        statusEl.textContent = "";
+        return;
+    }
+
+    setDataEditorVisibility(true);
+
+    if (state === "clean") {
+        const fallback = App.state.lastDatasetSavedAt
+            ? `Saved at ${App.state.lastDatasetSavedAt}.`
+            : "No unsaved changes.";
+        statusEl.textContent = message || fallback;
+        saveBtn.disabled = true;
+        App.state.dataGridDirty = false;
+        App.state.isSavingDataset = false;
+        return;
+    }
+
+    if (state === "dirty") {
+        statusEl.classList.add("is-dirty");
+        statusEl.textContent = message || "You have unsaved changes.";
+        saveBtn.disabled = false;
+        App.state.dataGridDirty = true;
+        App.state.isSavingDataset = false;
+        return;
+    }
+
+    if (state === "saving") {
+        statusEl.classList.add("is-saving");
+        statusEl.textContent = message || "Saving dataset...";
+        saveBtn.disabled = true;
+        App.state.isSavingDataset = true;
+        return;
+    }
+
+    if (state === "saved") {
+        statusEl.classList.add("is-saved");
+        statusEl.textContent = message || "Changes saved.";
+        saveBtn.disabled = true;
+        App.state.dataGridDirty = false;
+        App.state.isSavingDataset = false;
+        return;
+    }
+
+    if (state === "error") {
+        statusEl.classList.add("is-error");
+        statusEl.textContent = message || "Save failed. Please retry.";
+        saveBtn.disabled = false;
+        App.state.dataGridDirty = true;
+        App.state.isSavingDataset = false;
+    }
+}
+
+function getGridDataForSave() {
+    if (!App.state.hot) return [];
+    const data = App.state.hot.getData();
+    return Array.isArray(data) ? data : [];
+}
+
+/** Persist edited grid data and reload the dataset summary so downstream AI calls use fresh data. */
+async function saveDatasetChanges() {
+    const activeFilename = App.state.activeFile?.filename;
+    if (!activeFilename || !App.state.hot) {
+        showAppError("Upload a dataset before saving edits.");
+        return;
+    }
+
+    if (App.state.isSavingDataset) return;
+
+    const gridData = getGridDataForSave();
+    if (!Array.isArray(gridData) || gridData.length === 0) {
+        showAppError("No editable grid data found to save.");
+        return;
+    }
+
+    try {
+        setDataSaveStatus("saving");
+
+        const { response, data } = await fetchApiJson(`${App.API_BASE}/api/data/${encodePathForRoute(activeFilename)}`, {
+            method: "PUT",
+            headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ data: gridData }),
+        });
+        assertApiSuccess(response, data, "Failed to save dataset changes.", { requireSuccessFlag: true });
+
+        const savedAt = data.saved_at ? new Date(data.saved_at).toLocaleTimeString() : new Date().toLocaleTimeString();
+        App.state.lastDatasetSavedAt = savedAt;
+        const savedMessage = `Saved at ${savedAt}.`;
+
+        await loadDatasetForPath(activeFilename, {
+            silent: true,
+            forceReload: true,
+        });
+
+        setDataSaveStatus("saved", savedMessage);
+        if (App.state.dataSaveStateTimer) {
+            clearTimeout(App.state.dataSaveStateTimer);
+        }
+        App.state.dataSaveStateTimer = setTimeout(() => {
+            if (!App.state.dataGridDirty && !App.state.isSavingDataset) {
+                setDataSaveStatus("clean", savedMessage);
+            }
+        }, 2500);
+
+        await refreshConversationList({ silent: true });
+        fetchSmartQuestions({ force: true });
+    } catch (e) {
+        setDataSaveStatus("error", e.message || "Save failed. Please retry.");
+        showAppError(e.message || "Failed to save dataset changes.");
+    }
+}
 
 function encodePathForRoute(pathValue) {
     return String(pathValue || "")
@@ -31,8 +192,36 @@ function formatRelativeTimestamp(isoValue) {
     return new Date(isoValue).toLocaleDateString();
 }
 
+function getMaxChatSessions() {
+    const configuredMax = Number(App.state.maxChatSessions);
+    if (Number.isFinite(configuredMax) && configuredMax > 0) {
+        return Math.floor(configuredMax);
+    }
+    return 2;
+}
+
+function hasReachedChatSessionLimit() {
+    const sessions = Array.isArray(App.state.chatSessions) ? App.state.chatSessions : [];
+    return sessions.length >= getMaxChatSessions();
+}
+
+function updateNewConversationButtonState() {
+    const newConversationBtn = document.querySelector("#conversation-panel .sidebar-panel-header .sidebar-mini-btn");
+    if (!newConversationBtn) return;
+
+    const maxSessions = getMaxChatSessions();
+    const sessions = Array.isArray(App.state.chatSessions) ? App.state.chatSessions : [];
+    const reachedLimit = sessions.length >= maxSessions;
+
+    newConversationBtn.disabled = reachedLimit;
+    newConversationBtn.title = reachedLimit
+        ? `Maximum ${maxSessions} conversations reached. Delete one to create another.`
+        : "New conversation";
+}
+
 function showUploadingState(dropZone, filename) {
     if (!dropZone) return;
+    captureDefaultUploadMarkup();
     dropZone.innerHTML = `
         <div style="font-size: 2rem">⏳</div>
         <h3>Uploading ${escapeHtml(filename)}...</h3>
@@ -173,25 +362,88 @@ function assertApiSuccess(response, data, fallbackMessage, options = {}) {
     }
 }
 
+function hydrateChatHistory(historyItems) {
+    resetChatMessagesUI();
+
+    const items = Array.isArray(historyItems) ? historyItems : [];
+    if (items.length === 0) {
+        showChatHero();
+        return;
+    }
+
+    showChatMessages();
+    const chronological = [...items].reverse();
+    chronological.forEach((msg) => {
+        const role = msg.role === "user" ? "user" : "ai";
+        appendChatMessage(role, msg.text, msg.chart || null, msg.table || null, msg.stats || null);
+    });
+}
+
+function applySessionPayload(sessionPayload) {
+    if (!sessionPayload || typeof sessionPayload !== "object") return;
+
+    const previousSessionId = App.state.activeSessionId;
+
+    if (Array.isArray(sessionPayload.sessions)) {
+        App.state.chatSessions = sessionPayload.sessions;
+    }
+
+    const maxSessions = Number(sessionPayload.max_chat_sessions);
+    if (Number.isFinite(maxSessions) && maxSessions > 0) {
+        App.state.maxChatSessions = Math.floor(maxSessions);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(sessionPayload, "active_session_id")) {
+        App.state.activeSessionId = sessionPayload.active_session_id || null;
+    }
+
+    if (previousSessionId !== App.state.activeSessionId) {
+        // Session-scoped dashboard widgets should not bleed across conversations.
+        App.state.dashboardLoaded = false;
+        App.state.dashboardCharts = [];
+        App.state.dashboardCards = [];
+    }
+
+    renderConversationList();
+}
+
 async function refreshSessionDependentViews(options = {}) {
     const {
         syncActiveFile = false,
         clearDashboardFirst = false,
     } = options;
 
-    await refreshConversationList({ silent: true });
+    const sessionPayload = await refreshConversationList({ silent: true });
+    const pendingTasks = [];
+
     if (syncActiveFile) {
-        await syncActiveSessionFile();
+        const pathFromPayload = String(sessionPayload?.active_filename || "").trim();
+        if (pathFromPayload) {
+            pendingTasks.push(loadDatasetForPath(pathFromPayload, { silent: true, forceReload: true }));
+        } else {
+            pendingTasks.push(syncActiveSessionFile());
+        }
     }
-    await loadChatHistory({ replace: true, silent: true });
-    await updateUsageSummary({ silent: true });
+
+    if (Array.isArray(sessionPayload?.history)) {
+        hydrateChatHistory(sessionPayload.history);
+    } else {
+        pendingTasks.push(loadChatHistory({ replace: true, silent: true }));
+    }
+
+    pendingTasks.push(updateUsageSummary({ silent: true }));
 
     if (clearDashboardFirst && typeof clearDashboard === "function") {
         clearDashboard();
     }
     if (typeof refreshDashboard === "function") {
-        await refreshDashboard();
+        const shouldRefreshVisuals = typeof isVisualsViewActive !== "function" || isVisualsViewActive();
+        if (shouldRefreshVisuals || clearDashboardFirst) {
+            pendingTasks.push(refreshDashboard());
+        }
     }
+
+    await Promise.all(pendingTasks);
 }
 
 function loadFileIntoGrid(file) {
@@ -257,7 +509,13 @@ async function handleFileUpload(files) {
             summary: result.summary,
         };
 
-        await loadFileIntoGrid(file);
+        const loadedFromServer = await loadDatasetForPath(result.path || result.filename, {
+            silent: true,
+            forceReload: true,
+        });
+        if (!loadedFromServer) {
+            await loadFileIntoGrid(file);
+        }
         showUploadSuccess(result);
         updateSidebarFileInfo(result.path || result.filename, result.summary);
 
@@ -287,16 +545,31 @@ function loadGrid(data) {
             height: "100%",
             width: "100%",
             licenseKey: "non-commercial-and-evaluation",
+            autoRowSize: true,
+            autoColumnSize: {
+                samplingRatio: 50,
+                allowSampleDuplicates: false,
+            },
+            wordWrap: true,
             contextMenu: true,
             manualColumnResize: true,
             manualRowResize: true,
             filters: true,
             dropdownMenu: true,
-            stretchH: "all",
+            stretchH: "none",
+            renderAllRows: false,
+            viewportRowRenderingOffset: 20,
+            viewportColumnRenderingOffset: 10,
+            afterChange(changes, source) {
+                if (!changes || source === "loadData") return;
+                if (App.state.isSavingDataset) return;
+                setDataSaveStatus("dirty");
+            },
         });
 
         // Handsontable injects runtime CSS; force its color-scheme to light.
         enforceHandsontableLightScheme(gridContainer);
+        setDataSaveStatus("clean");
     }
 }
 
@@ -354,11 +627,17 @@ function updateSidebarFileInfo(filename, summary) {
 function clearActiveFileUI() {
     App.state.activeFile = null;
 
+    if (App.state.dataSaveStateTimer) {
+        clearTimeout(App.state.dataSaveStateTimer);
+        App.state.dataSaveStateTimer = null;
+    }
+
     const infoEl = document.getElementById("sidebar-file-info");
     if (infoEl) infoEl.style.display = "none";
 
     const uploadContainer = document.getElementById("upload-container");
     const dataGridContainer = document.getElementById("data-grid-container");
+    restoreUploadContainerMarkup();
     if (uploadContainer) uploadContainer.style.display = "flex";
     if (dataGridContainer) dataGridContainer.style.display = "none";
 
@@ -371,6 +650,8 @@ function clearActiveFileUI() {
     const previewToggle = document.getElementById("data-preview-toggle");
     if (previewBody) previewBody.innerHTML = "";
     if (previewToggle) previewToggle.style.display = "none";
+
+    setDataSaveStatus("hidden");
 }
 
 async function loadDatasetForPath(filePath, options = {}) {
@@ -388,20 +669,27 @@ async function loadDatasetForPath(filePath, options = {}) {
     }
 
     try {
-        const { response: summaryResp, data: summaryData } = await fetchApiJson(`${App.API_BASE}/api/data-summary/${encodePathForRoute(normalizedPath)}`, {
-            headers: App.getAuthHeaders()
-        });
+        const summaryUrl = `${App.API_BASE}/api/data-summary/${encodePathForRoute(normalizedPath)}`;
+        const fullDataUrl = `${App.API_BASE}/api/data/${encodePathForRoute(normalizedPath)}`;
+
+        const [summaryResult, fullDataResult] = await Promise.all([
+            fetchApiJson(summaryUrl, {
+                headers: App.getAuthHeaders()
+            }),
+            fetchApiJson(fullDataUrl, {
+                headers: App.getAuthHeaders()
+            }),
+        ]);
+
+        const { response: summaryResp, data: summaryData } = summaryResult;
         assertApiSuccess(summaryResp, summaryData, "Failed to load dataset summary.");
         if (!summaryData.summary) {
             throw createUserFacingError("Failed to load dataset summary.");
         }
 
-        const fullDataResp = await fetch(`${App.API_BASE}/api/data/${encodePathForRoute(normalizedPath)}`, {
-            headers: App.getAuthHeaders()
-        });
+        const { response: fullDataResp, data: fullData } = fullDataResult;
 
-        if (fullDataResp.ok) {
-            const fullData = await fullDataResp.json();
+        if (fullDataResp.ok && Array.isArray(fullData?.data)) {
             loadGrid(fullData.data || []);
         } else {
             const previewGrid = summaryPreviewToGridData(summaryData.summary);
@@ -433,6 +721,7 @@ function renderConversationList() {
 
     const sessions = Array.isArray(App.state.chatSessions) ? App.state.chatSessions : [];
     container.innerHTML = "";
+    updateNewConversationButtonState();
 
     if (sessions.length === 0) {
         const empty = document.createElement("div");
@@ -481,13 +770,10 @@ async function refreshConversationList(options = {}) {
         });
         assertApiSuccess(response, data, "Failed to load conversations.");
 
-        App.state.chatSessions = data.sessions || [];
-        if (Object.prototype.hasOwnProperty.call(data, "active_session_id")) {
-            App.state.activeSessionId = data.active_session_id || null;
-        } else if (!App.state.activeSessionId && App.state.chatSessions.length > 0) {
+        applySessionPayload(data);
+        if (!App.state.activeSessionId && Array.isArray(App.state.chatSessions) && App.state.chatSessions.length > 0) {
             App.state.activeSessionId = App.state.chatSessions[0].id || null;
         }
-        renderConversationList();
         return data;
     } catch (e) {
         if (!silent) showAppError(e.message || "Could not load conversations.");
@@ -522,30 +808,208 @@ async function activateConversation(sessionId) {
         });
         assertApiSuccess(response, data, "Failed to activate conversation.", { requireSuccessFlag: true });
 
-        App.state.activeSessionId = data.active_session_id || sessionId;
-        await refreshSessionDependentViews({ syncActiveFile: true });
+        await applyConversationTransition(data);
     } catch (e) {
         showAppError(e.message || "Could not activate conversation.");
     }
 }
 
-async function createNewConversation() {
+async function applyConversationTransition(payload, options = {}) {
+    const { clearDashboardFirst = false } = options;
+
+    applySessionPayload(payload);
+
+    const pendingTasks = [];
+    if (Array.isArray(payload?.history)) {
+        hydrateChatHistory(payload.history);
+    } else {
+        pendingTasks.push(loadChatHistory({ replace: true, silent: true }));
+    }
+
+    const activeFilename = String(payload?.active_filename || "").trim();
+    if (activeFilename) {
+        pendingTasks.push(loadDatasetForPath(activeFilename, { silent: true, forceReload: true }));
+    } else {
+        clearActiveFileUI();
+    }
+
+    if (clearDashboardFirst && typeof clearDashboard === "function") {
+        clearDashboard();
+    }
+
+    if (typeof refreshDashboard === "function") {
+        const shouldRefreshVisuals = typeof isVisualsViewActive !== "function" || isVisualsViewActive();
+        if (shouldRefreshVisuals || clearDashboardFirst) {
+            pendingTasks.push(refreshDashboard());
+        }
+    }
+
+    pendingTasks.push(updateUsageSummary({ silent: true }));
+    await Promise.all(pendingTasks);
+}
+
+function listKnownConversationFiles() {
+    const fromSessions = (App.state.chatSessions || [])
+        .map((session) => String(session?.filename || "").trim())
+        .filter(Boolean);
+    const active = String(App.state.activeFile?.filename || "").trim();
+    if (active) fromSessions.push(active);
+    return [...new Set(fromSessions)];
+}
+
+async function fetchUploadedFiles() {
+    const { response, data } = await fetchApiJson(`${App.API_BASE}/api/files`, {
+        headers: App.getAuthHeaders(),
+    });
+    assertApiSuccess(response, data, "Failed to load uploaded files.");
+    return Array.isArray(data.files) ? data.files : [];
+}
+
+function showNewConversationError(message) {
+    const errorEl = document.getElementById("new-conversation-error");
+    if (!errorEl) return;
+    if (!message) {
+        errorEl.style.display = "none";
+        errorEl.textContent = "";
+        return;
+    }
+    errorEl.style.display = "block";
+    errorEl.textContent = message;
+}
+
+function updateNewConversationModalState() {
+    const selected = document.querySelector('input[name="new-conversation-source"]:checked')?.value || "blank";
+    const existingSelect = document.getElementById("new-conversation-existing-file");
+    const uploadNowWrap = document.getElementById("new-conversation-upload-now-wrap");
+
+    if (existingSelect) {
+        existingSelect.disabled = selected !== "existing";
+    }
+    if (uploadNowWrap) {
+        uploadNowWrap.style.display = selected === "blank" ? "flex" : "none";
+    }
+}
+
+function closeNewConversationModal() {
+    const modal = document.getElementById("new-conversation-modal");
+    if (!modal) return;
+    modal.style.display = "none";
+    showNewConversationError("");
+}
+
+async function openNewConversationModal() {
+    const modal = document.getElementById("new-conversation-modal");
+    const existingSelect = document.getElementById("new-conversation-existing-file");
+    const currentRadio = document.getElementById("new-conversation-choice-current");
+    const currentWrap = document.getElementById("new-conversation-choice-current-wrap");
+    const existingRadio = document.getElementById("new-conversation-choice-existing");
+    const blankRadio = document.getElementById("new-conversation-choice-blank");
+    if (!modal || !existingSelect || !currentRadio || !existingRadio || !blankRadio || !currentWrap) return;
+
+    const currentFile = String(App.state.activeFile?.filename || "").trim();
+    currentRadio.disabled = !currentFile;
+    currentWrap.style.opacity = currentFile ? "1" : "0.55";
+
+    existingSelect.innerHTML = '<option value="">Loading uploaded files...</option>';
+
     try {
+        const uploaded = await fetchUploadedFiles();
+        const known = listKnownConversationFiles();
+        const mergedFiles = [...new Set([...uploaded, ...known])];
+
+        if (mergedFiles.length === 0) {
+            existingSelect.innerHTML = '<option value="">No uploaded files found</option>';
+            existingRadio.disabled = true;
+        } else {
+            existingRadio.disabled = false;
+            existingSelect.innerHTML = mergedFiles
+                .map((pathValue) => `<option value="${escapeAttr(pathValue)}">${escapeHtml(basenameFromPath(pathValue))}</option>`)
+                .join("");
+        }
+
+        if (currentFile) {
+            currentRadio.checked = true;
+        } else if (mergedFiles.length > 0) {
+            existingRadio.checked = true;
+        } else {
+            blankRadio.checked = true;
+        }
+    } catch (e) {
+        existingSelect.innerHTML = '<option value="">Failed to load files</option>';
+        existingRadio.disabled = true;
+        blankRadio.checked = true;
+        showNewConversationError(e.message || "Could not load uploaded files.");
+    }
+
+    modal.style.display = "flex";
+    updateNewConversationModalState();
+}
+
+async function submitNewConversationSelection() {
+    const selected = document.querySelector('input[name="new-conversation-source"]:checked')?.value || "blank";
+    const existingSelect = document.getElementById("new-conversation-existing-file");
+    const uploadNow = document.getElementById("new-conversation-upload-now")?.checked;
+    const confirmBtn = document.getElementById("new-conversation-confirm-btn");
+
+    const payload = {};
+    if (selected === "current") {
+        const currentFilename = String(App.state.activeFile?.filename || "").trim();
+        if (!currentFilename) {
+            showNewConversationError("No active dataset is available for this option.");
+            return;
+        }
+        payload.filename = currentFilename;
+        payload.use_active_file = true;
+    } else if (selected === "existing") {
+        const selectedFilename = String(existingSelect?.value || "").trim();
+        if (!selectedFilename) {
+            showNewConversationError("Select an uploaded dataset to continue.");
+            return;
+        }
+        payload.filename = selectedFilename;
+    } else {
+        payload.filename = null;
+    }
+
+    try {
+        showNewConversationError("");
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = "Creating...";
+        }
+
         const { response, data } = await fetchApiJson(`${App.API_BASE}/api/chat/sessions/new`, {
             method: "POST",
             headers: App.getAuthHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({ filename: App.state.activeFile?.filename || null }),
+            body: JSON.stringify(payload),
         });
         assertApiSuccess(response, data, "Failed to create conversation.", { requireSuccessFlag: true });
 
-        App.state.activeSessionId = data.session?.id || null;
-        await refreshSessionDependentViews({
-            syncActiveFile: true,
-            clearDashboardFirst: true,
-        });
+        await applyConversationTransition(data, { clearDashboardFirst: true });
+        closeNewConversationModal();
+
+        if (selected === "blank" && uploadNow) {
+            switchView("data");
+            const fileInput = document.getElementById("file-input");
+            if (fileInput) fileInput.click();
+        }
     } catch (e) {
-        showAppError(e.message || "Could not create conversation.");
+        showNewConversationError(e.message || "Could not create conversation.");
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Create";
+        }
     }
+}
+
+function createNewConversation() {
+    if (hasReachedChatSessionLimit()) {
+        const maxSessions = getMaxChatSessions();
+        showAppError(`You can keep up to ${maxSessions} conversations. Delete one before creating a new conversation.`);
+        return;
+    }
+    openNewConversationModal();
 }
 
 async function deleteConversation(sessionId, event) {
@@ -555,7 +1019,20 @@ async function deleteConversation(sessionId, event) {
     }
 
     if (!sessionId) return;
-    if (!window.confirm("Delete this conversation?")) return;
+
+    let confirmed = true;
+    if (window.UIUtils && typeof window.UIUtils.confirm === "function") {
+        confirmed = await window.UIUtils.confirm({
+            title: "Delete conversation",
+            message: "This conversation and its messages will be removed.",
+            confirmText: "Delete",
+            danger: true,
+        });
+    } else {
+        showAppError("Confirmation dialog is unavailable right now. Please refresh and try again.");
+        return;
+    }
+    if (!confirmed) return;
 
     try {
         const { response, data } = await fetchApiJson(`${App.API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
@@ -564,11 +1041,7 @@ async function deleteConversation(sessionId, event) {
         });
         assertApiSuccess(response, data, "Failed to delete conversation.", { requireSuccessFlag: true });
 
-        App.state.activeSessionId = data.active_session_id || null;
-        await refreshSessionDependentViews({
-            syncActiveFile: true,
-            clearDashboardFirst: true,
-        });
+        await applyConversationTransition(data, { clearDashboardFirst: true });
     } catch (e) {
         showAppError(e.message || "Could not delete conversation.");
     }
@@ -625,7 +1098,13 @@ function renderUsageSummary(summary) {
 }
 
 async function updateUsageSummary(options = {}) {
-    const { silent = false } = options;
+    const { silent = false, force = false } = options;
+
+    const now = Date.now();
+    if (!force && (now - lastUsageSummaryAt) < USAGE_SUMMARY_MIN_INTERVAL_MS) {
+        return App.state.lastUsageSummary || null;
+    }
+
     try {
         const { response, data } = await fetchApiJson(`${App.API_BASE}/api/usage/summary`, {
             headers: App.getAuthHeaders()
@@ -633,6 +1112,8 @@ async function updateUsageSummary(options = {}) {
         assertApiSuccess(response, data, "Failed to fetch usage summary.");
 
         renderUsageSummary(data);
+        lastUsageSummaryAt = now;
+        App.state.lastUsageSummary = data;
         return data;
     } catch (e) {
         if (!silent) {
@@ -646,9 +1127,24 @@ function startUsageSummaryAutoRefresh() {
     if (usageRefreshTimer) {
         clearInterval(usageRefreshTimer);
     }
+
+    if (!document.hidden) {
+        updateUsageSummary({ silent: true, force: true });
+    }
+
     usageRefreshTimer = setInterval(() => {
+        if (document.hidden) return;
         updateUsageSummary({ silent: true });
-    }, 15000);
+    }, USAGE_SUMMARY_POLL_INTERVAL_MS);
+
+    if (!startUsageSummaryAutoRefresh._boundVisibilityListener) {
+        document.addEventListener("visibilitychange", () => {
+            if (!document.hidden) {
+                updateUsageSummary({ silent: true, force: true });
+            }
+        });
+        startUsageSummaryAutoRefresh._boundVisibilityListener = true;
+    }
 }
 
 async function checkExistingFiles() {
@@ -659,7 +1155,27 @@ async function checkExistingFiles() {
     }
 }
 
+function bindNewConversationModalControls() {
+    const modal = document.getElementById("new-conversation-modal");
+    if (!modal || modal.dataset.bound === "true") return;
+
+    const radios = modal.querySelectorAll('input[name="new-conversation-source"]');
+    radios.forEach((radio) => {
+        radio.addEventListener("change", updateNewConversationModalState);
+    });
+
+    modal.addEventListener("click", (event) => {
+        if (event.target === modal) {
+            closeNewConversationModal();
+        }
+    });
+
+    modal.dataset.bound = "true";
+}
+
 async function initializeDashboardSidebarState() {
+    captureDefaultUploadMarkup();
+    bindNewConversationModalControls();
     await checkExistingFiles();
     startUsageSummaryAutoRefresh();
 }

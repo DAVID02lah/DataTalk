@@ -307,30 +307,12 @@
     transform: none;
 }
 
-/* Suggestion chips */
-.suggestions-row {
-    display: flex;
+/* Dashboard overrides for shared suggestion chip styles from styles.css */
+.chat-layout .suggestions-row {
     gap: 8px;
     margin-top: 16px;
-    flex-wrap: wrap;
-    justify-content: center;
 }
 
-.suggestion-chip {
-    padding: 8px 16px;
-    background: var(--surface-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: 20px;
-    font-size: 0.88rem;
-    color: var(--text-light);
-    cursor: pointer;
-    transition: background 0.2s, border-color 0.2s, color 0.2s;
-    font-family: var(--font-family);
-}
-
-.suggestion-chip:hover {
-    background: var(--surface-primary);
-    border-color: var(--primary-color);
-    color: var(--primary-color);
-    transform: translateY(-1px);
+.chat-layout .suggestion-chip {
+    font-size: 0.9rem;
 }

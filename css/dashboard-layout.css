@@ -4,6 +4,15 @@
     color-scheme: light !important;
 }
 
+#data-grid-container .handsontable td,
+#data-grid-container .handsontable th {
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.35;
+    vertical-align: top;
+}
+
 body {
     overflow: hidden;
 }
@@ -171,6 +180,15 @@ body {
 .sidebar-mini-btn:hover {
     border-color: var(--primary-color);
     color: var(--primary-color);
+}
+
+.sidebar-mini-btn:disabled,
+.sidebar-mini-btn:disabled:hover {
+    opacity: 0.55;
+    cursor: not-allowed;
+    color: var(--text-light);
+    border-color: var(--border-color);
+    background: var(--surface-secondary);
 }
 
 .sidebar-mini-btn.danger {
@@ -366,6 +384,39 @@ body {
 .view-section.active {
     display: flex;
     flex-direction: column;
+}
+
+.data-editor-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--surface-primary);
+}
+
+.data-save-status {
+    font-size: 0.82rem;
+    color: var(--text-light);
+}
+
+.data-save-status.is-dirty {
+    color: #b54708;
+}
+
+.data-save-status.is-saving {
+    color: var(--primary-color);
+}
+
+.data-save-status.is-saved {
+    color: #067647;
+}
+
+.data-save-status.is-error {
+    color: #b42318;
 }
 
 /* Empty States */

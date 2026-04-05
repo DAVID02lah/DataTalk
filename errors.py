@@ -29,3 +29,8 @@ class ValidationError(DataTalkError):
 class DataProcessingError(DataTalkError):
     def __init__(self, message="Error processing data"):
         super().__init__(message, status_code=500, error_type="processing_error")
+
+
+class LimitExceededError(DataTalkError):
+    def __init__(self, message="Resource limit exceeded"):
+        super().__init__(message, status_code=409, error_type="limit_exceeded")

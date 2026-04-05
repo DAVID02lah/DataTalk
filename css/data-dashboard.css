@@ -347,6 +347,20 @@
     border-color: #1d4ed8;
 }
 
+.btn-dashboard-action.btn-dashboard-danger,
+.btn-dashboard-action.btn-dashboard-primary.btn-dashboard-danger {
+    background: #dc2626;
+    border-color: #b91c1c;
+    color: #ffffff;
+}
+
+.btn-dashboard-action.btn-dashboard-danger:hover:not(:disabled),
+.btn-dashboard-action.btn-dashboard-primary.btn-dashboard-danger:hover:not(:disabled) {
+    background: #b91c1c;
+    border-color: #991b1b;
+    color: #ffffff;
+}
+
 /* ============================================
    Chart Customizer Slide-Out Panel
    ============================================ */
