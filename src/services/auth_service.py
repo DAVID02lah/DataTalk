@@ -13,8 +13,8 @@ import threading
 import time
 from flask import request, jsonify, g
 from supabase import create_client, Client
-import app_config
-from errors import AuthenticationError, ValidationError
+from src.core import app_config
+from src.core.errors import AuthenticationError, ValidationError
 
 logger = logging.getLogger("data_talk.auth")
 

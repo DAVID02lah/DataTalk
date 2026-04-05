@@ -11,7 +11,7 @@ import threading
 import time
 from collections import deque
 
-import app_config
+from src.core import app_config
 
 
 class QueryCache:

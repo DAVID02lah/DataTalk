@@ -10,10 +10,10 @@ from collections.abc import Mapping
 import time
 from typing import Any
 
-import app_config
-import auth_service
-import chat_session_service
-from errors import ValidationError
+from src.core import app_config
+from src.services import auth_service
+from src.services import chat_session_service
+from src.core.errors import ValidationError
 
 _DASHBOARD_STORE_VERSION = 2
 

@@ -27,17 +27,17 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-import app_config
-from app_state import SessionManager
-import data_service
-import gemini_service
-import auth_service
-import chat_session_service
-import usage_service
-from auth_service import require_auth
-from errors import DataTalkError, DatasetNotFoundError, ValidationError, LimitExceededError
-from services.analysis_pipeline import run_analysis_pipeline
-from services.dashboard_store import (
+from src.core import app_config
+from src.core.app_state import SessionManager
+from src.services import data_service
+from src.services import gemini_service
+from src.services import auth_service
+from src.services import chat_session_service
+from src.services import usage_service
+from src.services.auth_service import require_auth
+from src.core.errors import DataTalkError, DatasetNotFoundError, ValidationError, LimitExceededError
+from src.services.analysis_pipeline import run_analysis_pipeline
+from src.services.dashboard_store import (
     get_session_dashboard,
     load_dashboard_store,
     resolve_requested_session_id,
@@ -50,7 +50,8 @@ from services.dashboard_store import (
 # ==============================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
+PUBLIC_DIR = os.path.join(BASE_DIR, "public")
+app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = app_config.MAX_CONTENT_LENGTH
 
 cors_origins = app_config.get_allowed_cors_origins()
@@ -76,11 +77,13 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 
-ALLOWED_STATIC_FILES = {
+ALLOWED_HTML_FILES = {
     "index.html",
     "dashboard.html",
     "login.html",
     "profile.html",
+}
+ALLOWED_STATIC_FILES = {
     "styles.css",
     "dashboard.css",
 }
@@ -402,7 +405,7 @@ def ratelimit_handler(e):
 
 @app.route("/")
 def serve_index():
-    return send_from_directory(BASE_DIR, "index.html")
+    return send_from_directory(PUBLIC_DIR, "index.html")
 
 
 @app.route("/<path:filename>")
@@ -411,6 +414,9 @@ def serve_static(filename):
     normalized = filename.replace("\\", "/")
     if ".." in normalized:
         return jsonify({"error": "Invalid static path"}), 400
+
+    if normalized in ALLOWED_HTML_FILES:
+        return send_from_directory(PUBLIC_DIR, normalized)
 
     if normalized not in ALLOWED_STATIC_FILES and not normalized.startswith(ALLOWED_STATIC_PREFIXES):
         return jsonify({"error": "Static file not found"}), 404

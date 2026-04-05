@@ -8,8 +8,8 @@ import io
 import warnings
 import pandas as pd
 from werkzeug.utils import secure_filename
-import auth_service
-from errors import DatasetNotFoundError, ValidationError, DataProcessingError
+from src.services import auth_service
+from src.core.errors import DatasetNotFoundError, ValidationError, DataProcessingError
 
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 
