@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 import uuid
+
+from src.core.errors import ValidationError
 
 
 def now_iso() -> str:
@@ -122,12 +125,15 @@ def enforce_session_limit(state, max_sessions: int) -> None:
     if state.active_session_id not in kept_ids:
         state.active_session_id = kept_sessions[0].get("id")
 
-    active_session = set_active_session(state, state.active_session_id or "")
+    active_session = next(
+        (session for session in kept_sessions if session.get("id") == state.active_session_id),
+        None,
+    )
     if active_session is None:
         active_session = kept_sessions[0]
         state.active_session_id = active_session.get("id")
-        state.chat_history = _clean_messages(active_session.get("messages"))
-        active_session["messages"] = state.chat_history
+    state.chat_history = _clean_messages(active_session.get("messages"))
+    active_session["messages"] = state.chat_history
 
     if isinstance(getattr(state, "active_file", None), dict):
         state.active_file["filename"] = active_session.get("filename")
@@ -162,6 +168,32 @@ def ensure_active_session(state, filename: str | None = None, force_new: bool = 
     state.active_session_id = session["id"]
     state.chat_history = session["messages"]
     return session
+
+
+def resolve_requested_session_id(
+    state,
+    request_args: Mapping[str, Any] | None = None,
+    request_data: Mapping[str, Any] | None = None,
+) -> str:
+    """Resolve a requested session id and activate it so dashboard writes stay scoped."""
+    requested = ""
+    if isinstance(request_data, Mapping):
+        requested = str(request_data.get("session_id") or "").strip()
+
+    if not requested and isinstance(request_args, Mapping):
+        requested = str(request_args.get("session_id") or "").strip()
+
+    if requested:
+        active = set_active_session(state, requested)
+        if not active:
+            raise ValidationError("Invalid session_id")
+        return requested
+
+    active = ensure_active_session(
+        state,
+        filename=state.active_file.get("filename"),
+    )
+    return str(active.get("id") or "")
 
 
 def set_active_session(state, session_id: str) -> dict[str, Any] | None:
@@ -223,8 +255,9 @@ def append_exchange(state, user_text: str, model_result: dict[str, Any]) -> None
     state.chat_history = messages
 
 
-def get_active_messages(state) -> list[dict[str, Any]]:
-    session = ensure_active_session(state, filename=state.active_file.get("filename"))
+def get_active_messages(state, active_session: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Return messages from the active session, reusing a pre-resolved session when available."""
+    session = active_session or ensure_active_session(state, filename=state.active_file.get("filename"))
     messages = _clean_messages(session.get("messages"))
     session["messages"] = messages
     state.chat_history = messages
@@ -234,14 +267,21 @@ def get_active_messages(state) -> list[dict[str, Any]]:
 def list_session_summaries(state) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for session in getattr(state, "chat_sessions", []):
-        messages = _clean_messages(session.get("messages"))
+        messages = session.get("messages")
+        if session.get("title"):
+            message_count = len(messages) if isinstance(messages, list) else 0
+            title = session.get("title")
+        else:
+            messages = _clean_messages(messages)
+            message_count = len(messages)
+            title = _derive_title(messages)
         result.append({
             "id": session.get("id"),
-            "title": session.get("title") or _derive_title(messages),
+            "title": title,
             "filename": session.get("filename"),
             "created_at": session.get("created_at"),
             "updated_at": session.get("updated_at"),
-            "message_count": len(messages),
+            "message_count": message_count,
             "is_active": session.get("id") == getattr(state, "active_session_id", None),
         })
     # Most recently updated first.

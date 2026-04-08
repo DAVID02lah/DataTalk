@@ -199,22 +199,6 @@ def _run_generated_code_analysis(
                 return
 
 
-def _run_text_fallback_analysis(
-    *,
-    message: str,
-    df,
-    history_capped: list[dict[str, Any]],
-    state,
-    record_usage,
-    log_event,
-) -> dict[str, Any]:
-    log_event("fallback_analysis_started")
-    data_context = data_service.get_context_string(df, max_rows=5)
-    result = gemini_service.analyse_data(message, data_context, history_capped)
-    record_usage(state, result.get("usage"), "Fallback Text Analysis")
-    return result
-
-
 def run_analysis_pipeline(
     *,
     message: str,
@@ -277,14 +261,10 @@ def run_analysis_pipeline(
 
         if result is None:
             yield ("phase", {"phase": "fallback", "message": "Using text-based analysis..."})
-            result = _run_text_fallback_analysis(
-                message=message,
-                df=df,
-                history_capped=history_capped,
-                state=state,
-                record_usage=record_usage,
-                log_event=log_event,
-            )
+            log_event("fallback_analysis_started")
+            data_context = data_service.get_context_string(df, max_rows=5)
+            result = gemini_service.analyse_data(message, data_context, history_capped)
+            record_usage(state, result.get("usage"), "Fallback Text Analysis")
             if result.get("error"):
                 yield (
                     "error",
