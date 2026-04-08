@@ -82,7 +82,7 @@ flowchart TD
     NAV -->|Manage Profile| PROF
 
     subgraph UPLOAD ["File Upload Flow"]
-        U1[Drag & Drop or Click<br>CSV / XLSX / XLS] --> U1B[Client Validation<br>10MB limit + extension check]
+        U1[Drag & Drop or Click<br>CSV / XLSX / XLS] --> U1B[Client Validation<br>1MB limit + extension check]
         U1B --> U2[POST /api/upload<br>with Bearer JWT]
         U2 --> U3[data_service.save_uploaded_file<br>Upload to Supabase Storage]
         U3 --> U4[data_service.load_file<br>Download & Parse into DataFrame]
@@ -190,7 +190,7 @@ graph TD
     TOP --> TITLE[Page Title]
     TOP --> PROFILE[User Profile Pill<br>→ profile.html]
 
-    MAIN --> VIEW1["Data Connector View<br>— Upload Zone drag/drop<br>— Client-side 10MB validation<br>— Handsontable Grid<br>— Data Preview Panel"]
+    MAIN --> VIEW1["Data Connector View<br>— Upload Zone drag/drop<br>— Client-side 1MB validation<br>— Handsontable Grid<br>— Data Preview Panel"]
     MAIN --> VIEW2["Chat View<br>— Hero empty state<br>— SSE Streaming Messages<br>— Real-time Phase Updates<br>— Typing Indicator<br>— Input Bar + Suggestions<br>— Error Toasts"]
     MAIN --> VIEW3["Visualisations View<br>— GridStack Dashboard<br>— Pinned Charts per-session<br>— Stats Card Widgets<br>— Drag & Drop + Resize<br>— Download PNG / Remove<br>— Chart Customizer"]
     MAIN --> MODAL["Fullscreen Chart Modal<br>— Focus Trap<br>— Escape to Close<br>— aria-modal=true"]

@@ -58,7 +58,7 @@ SUPABASE_SERVICE_ROLE_KEY=\"your-service-role-key\"
 # Optional settings
 FLASK_DEBUG=False
 PORT=5000
-MAX_UPLOAD_MB=10
+MAX_UPLOAD_MB=1
 ```
 
 ### 3. Running the App (Windows)
