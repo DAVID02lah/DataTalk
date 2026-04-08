@@ -1,6 +1,6 @@
 # Data Talk — Project Analysis
 
-> **Generated:** 2026-03-16 | **Updated:** 2026-04-03 | **Total LOC:** ~10,321 (3,918 backend + 6,403 frontend) across 27 source files
+> **Generated:** 2026-03-16 | **Updated:** 2026-04-08 | **Total LOC:** ~11,937 (4,139 backend + 7,798 frontend) across 31 source files
 
 ---
 
@@ -23,12 +23,14 @@ graph LR
         D --> SVC[services/<br>analysis_pipeline.py<br>dashboard_store.py]
         D --> E[gemini_service.py<br>LLM Orchestration]
         D --> F[data_service.py<br>Data Loading & Profiling]
-        D --> G[code_executor.py<br>Sandboxed Execution]
+        D --> G[code_executor.py<br>Sandboxed Execution<br>(spawned process)]
         D --> H[app_state.py<br>Session & Cache Mgmt]
         D --> I[app_config.py<br>Environment Config]
         D --> M[auth_service.py<br>JWT & Auth Decorator]
         D --> CSS[chat_session_service.py<br>Multi-Session Mgmt]
         D --> US[usage_service.py<br>Token & Cost Tracking]
+        D --> PG[core/pagination.py<br>Shared Pagination Helper]
+        D --> VU[core/value_utils.py<br>Native Value Conversion]
         D --> ER[errors.py<br>Custom Exceptions]
     end
 
@@ -45,7 +47,7 @@ graph LR
     M -->|Verify JWT| K
     F -->|File Storage| K
     D -->|DB Queries| K
-    G -->|Thread| L[Sandboxed Thread<br>with Timeout]
+    G -->|Spawn process| L[Sandboxed Process<br>with Timeout]
 ```
 
 A vanilla HTML/JS frontend communicates with a Flask backend (Python). The backend orchestrates a multi-phase AI pipeline: **extract → generate code → execute in sandbox → interpret results**. Authentication, file storage, and persistent data are handled by **Supabase** (Auth, Storage, PostgreSQL). LLM operations use the **Google Gemini 3.1 Flash Lite Preview** model.
@@ -56,6 +58,7 @@ A vanilla HTML/JS frontend communicates with a Flask backend (Python). The backe
 - **Token usage tracking** — `usage_service.py` computes per-request and per-session costs (USD + MYR) with rate budget awareness
 - **Custom exception hierarchy** — `errors.py` defines 7 typed exceptions mapped to HTTP status codes, caught by a global Flask error handler
 - **Per-session dashboards** — Dashboard configs are stored per-session in a normalized store (v2 schema) instead of per-user flat list
+- **Shared core utilities** — `src/core/pagination.py` and `src/core/value_utils.py` keep cross-cutting helpers out of route and service modules
 
 ---
 
@@ -101,7 +104,7 @@ flowchart TD
 
         C5 --> C6["Phase 1: Code Generation<br>data_service.get_schema_string() → rich context<br>data_service.get_data_profile() → dataset type<br>gemini_service.generate_analysis_code() → pandas code<br>→ SSE: event=phase"]
 
-        C6 --> C7["code_executor.execute_analysis_code()<br>Thread with 60s timeout + AST validation"]
+        C6 --> C7["code_executor.execute_analysis_code()<br>Spawned process with 60s timeout + AST validation"]
 
         C7 --> C8{Execution<br>Success?}
         C8 -->|Yes| C10["Phase 2: Interpretation<br>gemini_service.interpret_results()<br>Send computed results → natural language<br>→ SSE: event=phase"]
@@ -151,9 +154,9 @@ flowchart LR
     LEN -->|No| REJECT1[Rejected<br>Code too long]
     LEN -->|Yes| AST[AST Parsing<br>& Validation]
     AST -->|Blocked| REJECT[Rejected<br>Unsafe code detected]
-    AST -->|Passed| SUB[Thread Execution<br>with Timeout Guard]
+    AST -->|Passed| SUB[Spawned Process Execution<br>with Timeout Guard]
     SUB --> SAFE["Safe Globals Only:<br>pandas, numpy, json"]
-    SAFE --> TIMEOUT["60s Timeout Guard"]
+    SAFE --> TIMEOUT["60s Timeout Guard<br>+ process terminate"]
     TIMEOUT -->|Success| NORM[Normalise Results<br>tables, charts, text, stats]
     NORM --> CONVERT[Deep Convert<br>numpy/pandas → native Python]
     TIMEOUT -->|Timeout| FAIL[TimeoutError]
@@ -253,7 +256,7 @@ graph TD
 | 5 | **Custom Exception Hierarchy** | `errors.py` defines 7 typed exceptions (`DataTalkError`, `AuthenticationError`, `DatasetNotFoundError`, `LLMServiceError`, `CodeExecutionError`, `ValidationError`, `DataProcessingError`) each mapped to HTTP status codes. Caught by a global Flask error handler for consistent API responses. |
 | 6 | **Real Authentication & Multi-User Support** | Supabase Auth with email/password signup, JWT verification via `@require_auth` decorator on all API routes. Per-user `UserState` isolated by `user_id` from JWT. Thread-safe `SessionManager` with TTL-based eviction (`SESSION_TTL_SECONDS`). `remove_state()` called on logout. |
 | 7 | **Persistent Storage Layer** | Supabase PostgreSQL with `profiles`, `chat_sessions`, `dashboard_configs` tables and Row Level Security. File uploads stored in Supabase Storage with per-user directory isolation. Session rehydration on login. v2 persistence format for chat sessions with backward-compatible migration. |
-| 8 | **Sandbox Security (Defense-in-Depth)** | `code_executor.py` implements 4 layers: code length cap (10K chars), AST-based static analysis via `_SafetyVisitor`, 19 blocked builtins + 9 forbidden modules + 14 forbidden attributes, restricted builtins dict, and a 60-second timeout via daemon thread. |
+| 8 | **Sandbox Security (Defense-in-Depth)** | `code_executor.py` implements 4 layers: code length cap (10K chars), AST-based static analysis via `_SafetyVisitor`, 19 blocked builtins + 9 forbidden modules + 14 forbidden attributes, restricted builtins dict, and a 60-second timeout enforced in a spawned child process. |
 | 9 | **Smart Data Profiling** | `data_service.py` auto-detects dataset types (survey, time series, transactional, categorical, numerical) and generates domain-specific analysis suggestions. Provides the LLM with richer context, significantly improving output quality. |
 | 10 | **Token-Efficient Context Building** | Schema context is dynamically sized with a `max_tokens` budget. Correlations are computed locally, only metadata sent to the LLM. The extraction phase pulls out unique categorical values so the code generator knows exact column names — prevents hallucinated column references. |
 | 11 | **Per-User DataFrame Caching** | Loaded DataFrames are cached in `UserState._file_cache` after first download. Schema contexts (lean + full) and data profiles are also cached per file. Invalidated on new upload. Prevents re-downloading from Supabase on every chat message. |
@@ -264,11 +267,11 @@ graph TD
 | 16 | **Error Toast System** | Frontend `showErrorToast()` provides branded, auto-dismissing error notifications. `showAppError()` handles both inline and toast display. Replaced many `alert()` calls with proper UI feedback. |
 | 17 | **Polished UI with Custom Brand** | Pink/navy/beige brand palette with 7 custom illustrated character assets. Bento grid layout for landing page. Smooth micro-interactions (hover lifts, gradient avatars, animated typing dots). CSS containment for scroll performance. |
 | 18 | **Unified Theme Tokens** | Shared CSS variables power a consistent single-theme experience across all UI surfaces and dashboard modules. |
-| 19 | **Clean Modular CSS** | All stylesheets properly organized in `/css/` folder with clear separation of concerns: `styles.css` (global/landing), `dashboard.css` (manifest/imports), `dashboard-layout.css`, `dashboard-chat.css`, `dashboard-grid.css`, `dashboard-overlays.css`, `data-dashboard.css`. CSS custom properties for all theming. |
+| 19 | **Clean Modular CSS** | Stylesheets are organized by concern in `/css/`: `styles.css` (global/landing), `dashboard-layout.css` (layout + visualisation grid), `dashboard-chat.css` (chat + overlay UI), and `data-dashboard.css` (GridStack/dashboard overrides). The old `dashboard.css`, `dashboard-grid.css`, and `dashboard-overlays.css` split files were removed after consolidation. |
 | 20 | **Consistent Structured Logging** | All backend services use Python's `logging` module with named loggers (`data_talk`, `data_talk.auth`, `data_talk.gemini`). `_log_event()` emits structured JSON logs. `_record_and_log_usage()` persists token usage to state and emits logs. |
 | 21 | **DOMPurify XSS Prevention** | All user-generated and LLM-generated markdown is sanitised through a `marked.js` → `DOMPurify` pipeline before DOM insertion. Custom `escapeHtml()` fallback if DOMPurify is unavailable. |
 | 22 | **Per-User Query Caching** | LRU cache (configurable, default 300 items) per user prevents redundant API calls for repeated questions, saving both time and API costs. Thread-safe via `threading.Lock`. |
-| 23 | **Paginated List Endpoints** | `/api/files` and `/api/chat/history` support `?page=&per_page=` query parameters with metadata (`total`, `total_pages`). Shared `_paginate()` helper with configurable defaults via `app_config`. |
+| 23 | **Paginated Chat History** | `/api/chat/history` supports `?page=&per_page=` query parameters with metadata (`total`, `total_pages`). The shared paginator now lives in `src/core/pagination.py`, keeping route files focused on request handling. |
 | 24 | **Configurable via Environment** | `app_config.py` (85 lines) centralizes all configuration: `MAX_RETRIES`, `CHAT_HISTORY_CAP`, `QUERY_CACHE_SIZE`, `EXEC_TIMEOUT`, `RATE_LIMIT`, `USD_TO_MYR_RATE`, `SESSION_TTL_SECONDS`, pagination defaults, Supabase URLs, SSL paths. Type-safe getters (`get_bool_env`, `get_int_env`, `get_float_env`). |
 | 25 | **All Dependencies Pinned** | `requirements.txt` pins exact versions for all 11 packages — excellent for reproducibility and security. |
 | 26 | **Path Traversal Prevention** | `data_service.py` normalizes all storage paths via `_normalize_relative_path()` with `secure_filename()` and explicit `..` traversal blocking. |
@@ -281,8 +284,8 @@ graph TD
 
 | # | Area | Details | Location |
 |---|------|---------|----------|
-| 1 | **Thread-Unsafe Logout** | `logout()` mutates the shared Supabase singleton client's internal `_headers` attribute to inject user tokens before calling `sign_out()`. If two users log out simultaneously, headers can be interleaved. | `auth_service.py` lines 185-197 |
-| 2 | **No Full Data Pagination** | `get_full_data()` loads the entire dataset into memory and sends it as JSON. No pagination. Large files will cause memory and bandwidth issues. (`/api/files` and `/api/chat/history` are now paginated — this only affects `/api/data/<filename>`.) | `server.py` lines 438-449 |
+| 1 | **Broken Logout Flow** | `logout()` now creates a fresh Supabase client and updates its headers, but it never calls `sign_out()` or returns success. The route no longer invalidates the session token reliably. | `auth_service.py` lines 278-289 |
+| 2 | **No Full Data Pagination** | `get_full_data()` still loads the entire dataset into memory and sends it as JSON. Large files will cause memory and bandwidth issues. `chat/history` is paginated, but `/api/data/<filename>` remains a full payload endpoint. | `server.py` lines 438-449 |
 
 ### 7.2 Security Concerns
 
@@ -292,7 +295,7 @@ graph TD
 | 2 | **Unpinned CDN Versions** | SheetJS uses `xlsx-latest`, Handsontable and Marked.js use unpinned `npm/...` URLs. GridStack uses `@10` (major) but not a specific minor version. Supply-chain attack risk. | `dashboard.html` |
 | 3 | **localStorage Token Storage** | `dt_access_token`, `dt_refresh_token`, and `dt_user` stored in `localStorage`, accessible to any JS on the page including scripts from compromised CDNs. `httpOnly` cookies would be more secure. | `login.html`, `profile.html`, `core.js` |
 | 4 | **No Prompt Injection Protection** | User questions are interpolated directly into LLM prompts. A crafted question could manipulate the system prompt, causing unintended code generation. | `gemini_service.py` |
-| 5 | **Sandbox Escape Residual Risk** | While AST validation blocks known dangerous patterns, `type()`, `vars()`, `dir()`, and `hasattr()` remain in safe builtins. No memory or CPU limits on execution thread. Thread-based execution means a segfault would crash the server. | `code_executor.py` |
+| 5 | **Sandbox Escape Residual Risk** | While AST validation blocks known dangerous patterns, `type()`, `vars()`, `dir()`, and `hasattr()` remain in safe builtins. The sandbox now runs in a spawned child process, so timeout handling is stronger, but it is still not a hard security boundary. | `code_executor.py` |
 | 6 | **No Token Refresh Endpoint** | The server returns `refresh_token` on login, but no endpoint exists to refresh an expired access token. Users must re-authenticate when tokens expire. | `auth_service.py` |
 | 7 | **Token Verified via Network on Every Request** | `verify_token()` calls Supabase `getUser()` API on every authenticated request. No local JWT validation or caching. Adds latency and creates a dependency on Supabase availability. | `auth_service.py` line 130 |
 
@@ -335,7 +338,7 @@ graph TD
 | # | Improvement | Impact | Effort |
 |---|-------------|--------|--------|
 | 1 | **Add SRI hashes + pin CDN versions** — Generate integrity hashes for all 9 external libraries. Pin SheetJS, Handsontable, Marked.js, and GridStack to specific minor versions. | Security | Low |
-| 2 | **Fix thread-unsafe logout** — Use a per-request Supabase client instance in `logout()` instead of mutating the shared singleton's headers. | Stability | Low |
+| 2 | **Fix logout flow and client isolation** — Make `logout()` actually call `sign_out()` and keep request-local client state isolated so session invalidation is reliable. | Stability | Low |
 | 3 | **Add token refresh endpoint** — Server-side `/api/auth/refresh` endpoint that accepts a refresh token and returns a new access token. | Auth | Low |
 
 ### Phase 2: Quality & Reliability
@@ -373,50 +376,48 @@ graph TD
 
 ## 9. File-by-File Summary
 
-### Backend (Python) — 3,918 lines
+### Backend (Python) — 4,139 lines
 
 | File | Lines | Role | Health |
 |------|-------|------|--------|
-| `server.py` | 1,012 | Flask REST API + SSE router, auth middleware, pagination helper, static file serving, 20+ route handlers including chat sessions and usage endpoints | 🟢 Clean routing; service layer delegation; `/api/data` still unpaginated |
-| `data_service.py` | 470 | Supabase Storage file management, DataFrame summarization, schema generation, data profiling, path traversal prevention | 🟢 Good; O(n²) correlations for large column counts |
-| `gemini_service.py` | 422 | LLM prompt construction, code generation, interpretation, extraction, response parsing | 🟢 Solid; consistent logging; exceptions properly raised |
-| `services/analysis_pipeline.py` | 328 | Extracted analysis pipeline generator: cache check → load → extract → generate → execute → retry → interpret → fallback | 🟢 Excellent separation; each function owns one decision level |
-| `code_executor.py` | 307 | Sandboxed execution with AST validation, thread-based execution with timeout, result normalization, deep type conversion | 🟢 Strong security model; no memory/CPU limits |
-| `chat_session_service.py` | 300 | Multi-session management: create, activate, delete, persist, restore (v2 + legacy migration), title derivation, message cleaning | 🟢 Robust; handles legacy format gracefully |
-| `auth_service.py` | 224 | Supabase Auth integration, JWT verification, profile management, `@require_auth` decorator, service-role client | 🟡 Thread-unsafe logout; no local JWT caching; no token refresh |
-| `usage_service.py` | 174 | Token pricing, cost computation (USD + MYR), rate limit parsing, request budget tracking, per-session usage aggregation | 🟢 Clean; well-encapsulated |
-| `services/dashboard_store.py` | 121 | Per-session dashboard persistence: normalize legacy→v2 store, load/save from Supabase, session-scoped access | 🟢 Good; prevents cross-session writes |
-| `app_state.py` | 118 | Per-user `SessionManager` + `UserState` + bounded `QueryCache` + DataFrame cache + TTL-based session eviction | 🟢 Clean; thread-safe |
-| `app_config.py` | 85 | Centralized environment variable parsing with safe defaults, pagination config, SSL paths, rate limits, usage conversion rate | 🟢 Clean |
-| `errors.py` | 32 | Custom exception hierarchy: 7 typed exceptions mapped to HTTP status codes | 🟢 Clean |
-| `services/__init__.py` | 2 | Package initializer | 🟢 |
+| `server.py` | 1,218 | Flask REST API + SSE router, auth middleware, history pagination, static file serving, route orchestration | 🟢 Clean routing; service layer delegation; `/api/data` still unpaginated |
+| `data_service.py` | 582 | Supabase Storage file management, DataFrame summarization, schema generation, data profiling, path traversal prevention | 🟢 Good; O(n²) correlations remain for large column counts |
+| `gemini_service.py` | 414 | LLM prompt construction, code generation, interpretation, extraction, shared usage parsing | 🟢 Solid; consistent logging; exceptions properly raised |
+| `services/analysis_pipeline.py` | 307 | Extracted analysis pipeline generator: cache check → load → extract → generate → execute → retry → interpret → fallback | 🟢 Excellent separation; each function owns one decision level |
+| `code_executor.py` | 297 | Sandboxed execution with AST validation, spawned-process timeout, result normalization, deep type conversion | 🟢 Stronger isolation; process startup adds overhead |
+| `chat_session_service.py` | 404 | Multi-session management: create, activate, delete, persist, restore (v2 + legacy migration), title derivation, session resolution | 🟢 Robust; handles legacy format gracefully |
+| `auth_service.py` | 314 | Supabase Auth integration, JWT verification, profile management, `@require_auth` decorator, service-role client | 🟡 Logout flow still needs cleanup; no local JWT caching; no token refresh |
+| `usage_service.py` | 173 | Token pricing, cost computation (USD + MYR), rate limit parsing, request budget tracking, per-session usage aggregation | 🟢 Clean; well-encapsulated |
+| `services/dashboard_store.py` | 120 | Per-session dashboard persistence: normalize legacy→v2 store, load/save from Supabase, session-scoped access | 🟢 Good; prevents cross-session writes |
+| `app_state.py` | 130 | Per-user `SessionManager` + `UserState` + bounded `QueryCache` + DataFrame cache + TTL-based session eviction | 🟢 Clean; thread-safe |
+| `app_config.py` | 100 | Centralized environment variable parsing with safe defaults, pagination config, SSL paths, rate limits, usage conversion rate | 🟢 Clean |
+| `src/core/pagination.py` | 21 | Shared pagination helper for API list responses | 🟢 Tiny and focused |
+| `src/core/value_utils.py` | 22 | Native pandas/numpy scalar conversion helper | 🟢 Reused by data and execution layers |
+| `errors.py` | 36 | Custom exception hierarchy: 7 typed exceptions mapped to HTTP status codes | 🟢 Clean |
 
-### Frontend (HTML/JS/CSS) — 6,403 lines
+### Frontend (HTML/JS/CSS) — 7,798 lines
 
 | File | Lines | Role | Health |
 |------|-------|------|--------|
-| `js/data-chat.js` | 1,287 | File upload, SSE chat streaming, chart rendering, conversation list management, usage summary display, typing indicators, error toasts, smart questions | 🟢 Feature-rich; 65 functions; global namespace |
-| `js/dashboard-ui.js` | 974 | GridStack dashboard, drag-and-drop, fullscreen modal with focus trap, chart pinning, KPI card widgets, chart customizer, layout persistence | 🟢 GridStack migration solid; 61 functions; residual `confirm()` |
-| `css/styles.css` | 775 | Global styles, CSS variables, landing page, responsive (1 breakpoint) | 🟢 Clean brand palette |
-| `css/dashboard-overlays.css` | 460 | Upload banner, data preview panel, fullscreen modal, stats, tables, annotations | 🟢 Well-structured |
-| `js/core.js` | 418 | App singleton, auth, particle animation, DOM initialization, view switching, markdown/HTML sanitization | 🟡 O(n²) particles; global namespace; load order dependency |
-| `profile.html` | 405 | Account settings page — display name editing, avatar initials, session validation, responsive layout, ARIA live regions | 🟢 Good accessibility; duplicate auth utils |
-| `dashboard.html` | 375 | Main SPA shell — sidebar with conversation panel, usage panel, 3 views, fullscreen modal, 9 CDN dependencies | 🟡 Zero SRI hashes; unpinned CDN versions |
-| `login.html` | 363 | Supabase Auth page — sign in/up toggle, inline styles + scripts, existing session detection | 🟡 localStorage tokens; no ARIA live regions |
-| `css/dashboard-chat.css` | 351 | Chat messages, avatars, typing indicator, input bar, suggestion chips | 🟢 Clean |
-| `css/data-dashboard.css` | 311 | GridStack overrides, KPI cards, chart customizer, empty state, dashboard-specific styles | 🟢 Good |
+| `js/data-chat.js` | 1,802 | File upload, SSE chat streaming, chart rendering, conversation list management, usage summary display, typing indicators, error toasts, smart questions | 🟢 Feature-rich; global namespace remains |
+| `js/dashboard-ui.js` | 1,091 | GridStack dashboard, drag-and-drop, fullscreen modal with focus trap, chart pinning, KPI card widgets, chart customizer, layout persistence | 🟢 GridStack migration solid; residual `confirm()` |
+| `css/styles.css` | 710 | Global styles, CSS variables, landing page, responsive foundations | 🟢 Clean brand palette |
+| `js/core.js` | 422 | App singleton, auth, particle animation, DOM initialization, view switching, markdown/HTML sanitization | 🟡 O(n²) particles; global namespace; load order dependency |
+| `profile.html` | 404 | Account settings page — display name editing, avatar initials, session validation, responsive layout, ARIA live regions | 🟢 Good accessibility; duplicate auth utils |
+| `dashboard.html` | 441 | Main SPA shell — sidebar with conversation panel, usage panel, 3 views, fullscreen modal, 2 merged dashboard CSS bundles | 🟡 Zero SRI hashes; unpinned CDN versions |
+| `login.html` | 352 | Supabase Auth page — sign in/up toggle, inline styles + scripts, existing session detection | 🟡 localStorage tokens; no ARIA live regions |
+| `css/dashboard-chat.css` | 854 | Chat messages, avatars, typing indicator, input bar, suggestion chips, merged overlay UI | 🟢 Clean |
+| `css/data-dashboard.css` | 534 | GridStack overrides, KPI cards, chart customizer, empty state, dashboard-specific styles | 🟢 Good |
 | `index.html` | 293 | Marketing landing page — bento grid, pricing, FAQ, custom illustrations | 🟢 Loads only `core.js` for particles |
-| `css/dashboard-layout.css` | 258 | Dashboard structure — sidebar, top bar, content area, Handsontable light scheme | 🟢 Clean; fixed sidebar |
-| `css/dashboard-grid.css` | 236 | Legacy visualisation grid styles, drag-and-drop states | 🟡 Partially superseded by GridStack; may contain dead CSS |
-| `css/dashboard.css` | 6 | CSS `@import` manifest for dashboard stylesheets | 🟢 Clean |
+| `css/dashboard-layout.css` | 684 | Dashboard structure — sidebar, top bar, content area, merged dashboard grid styles, Handsontable light scheme | 🟢 Clean; fixed sidebar |
 | `js/constants.js` | 13 | Centralized frontend config constants (chart heights, delays) | 🟢 Clean |
 
 ### Configuration & Infrastructure
 
 | File | Lines | Role | Health |
 |------|-------|------|--------|
-| `requirements.txt` | 12 | Python dependencies — all 11 packages pinned | 🟢 Excellent |
-| `README.md` | ~151 | Project documentation with API endpoints, setup, security model | 🟢 Comprehensive |
+| `requirements.txt` | 10 | Python dependencies — all packages pinned | 🟢 Excellent |
+| `README.md` | 158 | Project documentation with API endpoints, setup, security model | 🟢 Comprehensive |
 | `.env` | 6 vars | Environment config — API keys, Supabase credentials, HTTPS toggle | 🟢 In `.gitignore` |
 | `.gitignore` | ~27 | Git ignore rules | 🟢 Covers essentials |
 
@@ -449,7 +450,6 @@ graph TD
 | `openpyxl` | 3.1.5 | Excel parsing |
 | `python-dotenv` | 1.0.1 | `.env` file loading |
 | `supabase` | 2.13.0 | Auth, Storage, Database |
-| `PyJWT` | 2.10.1 | JWT handling |
 | `cryptography` | 44.0.0 | Crypto primitives / SSL |
 
 ### Frontend (CDN)
@@ -468,82 +468,82 @@ graph TD
 
 ---
 
-## 11. Changes Since Last Analysis (2026-03-31)
+## 11. Changes Since Last Analysis (2026-04-08)
 
 ### New Files
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `chat_session_service.py` | 300 | Multi-session chat management with v2 persistence format and legacy migration |
-| `usage_service.py` | 174 | Token pricing, cost computation (USD/MYR), rate budget tracking |
-| `services/analysis_pipeline.py` | 328 | Extracted analysis pipeline generator from `server.py` |
-| `services/dashboard_store.py` | 121 | Per-session dashboard persistence with normalized store schema |
-| `services/__init__.py` | 2 | Package initializer for service layer |
-| `profile.html` | 405 | Account settings page with display name editing |
+| `src/core/pagination.py` | 21 | Shared pagination helper for list responses |
+| `src/core/value_utils.py` | 22 | Native scalar conversion helper reused by data and execution layers |
 
 ### Removed Files
 
 | File | Reason |
 |------|--------|
-| `script.js` | Legacy module loader — deleted as recommended in previous analysis |
+| `css/dashboard.css` | CSS manifest removed after bundling dashboard styles |
+| `css/dashboard-grid.css` | Merged into `dashboard-layout.css` |
+| `css/dashboard-overlays.css` | Merged into `dashboard-chat.css` |
 
 ### Resolved Issues
 
 | Previous Issue | Resolution |
 |----------------|------------|
-| **Legacy `script.js` Still Exists** (Quality #5) | Resolved. File deleted; no longer exists in the codebase. |
-| **Full Dashboard Grid Re-Render** (Performance #4) | Resolved. Migrated from custom CSS grid to GridStack library. Individual widgets are now added/removed without full re-render. `addDashboardChartWidget()` handles individual widget lifecycle. |
-| **`alert()` / `confirm()` for User Feedback** (UX #4) | Partially resolved. Error toast system added via `showErrorToast()`. Most `alert()` calls replaced. `confirm()` still used for delete operations. |
-| **No Session Eviction** | Already resolved in previous update. TTL-based eviction via `SessionManager._evict_expired()`. |
+| **Route-local pagination helper** | Moved to `src/core/pagination.py` so `server.py` stays focused on request routing. |
+| **Duplicated usage_metadata parsing** | Centralized in `_extract_usage_dict()` so Gemini token accounting is consistent across call sites. |
+| **Thread-based code execution** | Replaced with spawned child-process execution plus terminate-on-timeout semantics. |
+| **Session resolver in dashboard_store** | Moved into `chat_session_service.py` so session scoping lives with chat-session state. |
+| **Dashboard CSS fragmentation** | Consolidated into two dashboard bundles, reducing HTTP requests and cascade complexity. |
+| **Fallback analysis wrapper** | Inlined into `analysis_pipeline.py` to remove an unnecessary function hop. |
 
 ### Growth & Refactoring
 
 | Component | Previous LOC | Current LOC | Change |
 |-----------|-------------|-------------|--------|
-| **Backend total** | ~2,479 | ~3,918 | +1,439 (+58%) |
-| **Frontend total** | ~4,683 | ~6,403 | +1,720 (+37%) |
-| **Total project** | ~7,162 | ~10,321 | +3,159 (+44%) |
-| `server.py` | 927 | 1,012 | +85 (routing only; pipeline logic extracted) |
-| `js/data-chat.js` | 727 | 1,287 | +560 (session mgmt, usage display, error toasts) |
-| `js/dashboard-ui.js` | 479 | 974 | +495 (GridStack, customizer, KPI cards) |
-| `dashboard.html` | 263 | 375 | +112 (conversation panel, usage panel, GridStack deps) |
-| `data_service.py` | 453 | 470 | +17 |
+| **Backend total** | ~3,918 | ~4,139 | +221 (+6%) |
+| **Frontend total** | ~6,403 | ~7,798 | +1,395 (+22%) |
+| **Total project** | ~10,321 | ~11,937 | +1,616 (+16%) |
+| `server.py` | 1,012 | 1,218 | +206 |
+| `js/data-chat.js` | 1,287 | 1,802 | +515 |
+| `js/dashboard-ui.js` | 974 | 1,091 | +117 |
+| `css/dashboard-layout.css` | 258 | 684 | +426 |
+| `css/dashboard-chat.css` | 351 | 854 | +503 |
+| `dashboard.html` | 375 | 441 | +66 |
+| `data_service.py` | 470 | 582 | +112 |
 
 ### New Capabilities
 
 | Addition | Details |
 |----------|---------|
-| **Multi-session conversations** | Users can create, switch between, and delete multiple chat sessions. Each session has its own title (auto-derived from first question), message history, and token usage tracking. Persisted in v2 format to Supabase. |
-| **Token usage & cost dashboard** | Sidebar displays total tokens consumed, cost in MYR, and remaining rate budget with progress bar. Auto-refreshes every 30 seconds. |
-| **Per-session dashboards** | Pinned charts are scoped to the active conversation session. `dashboard_store.py` maintains a v2 normalized store with session isolation. Prevents cross-session chart leakage. |
-| **GridStack dashboard** | Replaced CSS grid with GridStack for drag-and-drop widget management. Supports chart widgets and KPI card widgets with aggregation (count, sum, avg, min, max, median, unique). |
-| **Chart customizer** | Dashboard charts have a customizer overlay for editing layout properties. |
-| **Profile page** | Standalone account settings at `profile.html` with responsive layout, session validation, auto-generated avatar initials, and proper ARIA support. |
-| **Error toast system** | Frontend `showErrorToast()` provides branded, auto-dismissing error notifications replacing browser `alert()` calls. |
-| **Service layer** | Analysis pipeline and dashboard store logic extracted from `server.py` into `services/` package. Each function owns a single responsibility. |
-| **Request budget tracking** | `usage_service.py` tracks message timestamps for sliding-window rate budget computation. API response includes `remaining` requests and `reset_in_seconds`. |
-| **Conversation sidebar** | Dashboard sidebar now shows a conversation list with create/activate/delete actions, plus usage summary panel. |
+| **Merged dashboard CSS bundles** | The dashboard now loads two combined stylesheets instead of four split modules, reducing round-trips and keeping the cascade simpler. |
+| **Shared core helpers** | `src/core/pagination.py` and `src/core/value_utils.py` keep cross-cutting logic out of route and service modules. |
+| **Process-based sandbox** | AI-generated code now runs in a spawned child process that can be terminated on timeout, improving isolation. |
+| **Shared usage parsing** | Gemini usage extraction is centralized, which keeps token accounting consistent across the app. |
+| **Session-aware request helpers** | Chat/session resolution now lives in `chat_session_service.py`, reducing route duplication. |
+| **Per-session dashboards** | Pinned charts remain scoped to the active conversation session through the normalized dashboard store. |
+| **Multi-session conversations** | Users can create, switch between, and delete multiple chat sessions with per-session history and token usage tracking. |
+| **Error toast system** | Frontend `showErrorToast()` continues to provide branded, auto-dismissing error notifications instead of browser alerts. |
 
 ---
 
 ## 12. Verdict
 
-**Data Talk has matured from a well-designed prototype into a fully-featured, multi-session AI data analysis platform.** The codebase has grown 44% (from ~7,162 to ~10,321 LOC) while actually improving in architecture quality — the new service layer extraction, multi-session system, and per-session dashboards demonstrate thoughtful engineering.
+**Data Talk is now a more modular and operationally coherent multi-session AI data analysis platform.** The codebase is about 11,937 LOC across 31 source files, and the latest refactor reduced route duplication while also consolidating CSS bundles and shared helpers.
 
 **What's strong:**
-- **Architecture**: Service layer extraction (`services/`), multi-session chat with v2 persistence and legacy migration, per-session dashboard scoping, custom exception hierarchy with global error handling. Each service module owns a single concern.
-- **Features**: Multi-session conversations with auto-titles, token usage tracking with MYR cost display, GridStack drag-and-drop dashboards with KPI card widgets, profile management page, error toast system, rate budget visualization.
-- **Security**: Defense-in-depth sandbox (AST + restricted builtins + timeout), JWT authentication, per-user data isolation, API rate limiting, path traversal prevention, DOMPurify XSS sanitization.
-- **UX / Design**: Complete brand identity with custom illustrations, SSE streaming phases, chart customizer, GridStack widgets, conversation management sidebar, usage metrics, and 60fps scroll performance.
-- **Infrastructure**: Supabase integration (Auth + Storage + PostgreSQL), session rehydration, per-user caching with TTL eviction, consistent structured logging, 11 pinned Python dependencies.
+- **Architecture**: Service layer extraction (`services/`), multi-session chat with v2 persistence and legacy migration, per-session dashboard scoping, shared core helpers, and a custom exception hierarchy with global error handling. Each service module owns a single concern.
+- **Features**: Multi-session conversations with auto-titles, token usage tracking with MYR cost display, GridStack drag-and-drop dashboards with KPI card widgets, profile management page, error toast system, and rate budget visualization.
+- **Security**: Defense-in-depth sandbox (AST + restricted builtins + spawned-process timeout), JWT authentication, per-user data isolation, API rate limiting, path traversal prevention, and DOMPurify XSS sanitization.
+- **UX / Design**: Complete brand identity with custom illustrations, SSE streaming phases, chart customizer, GridStack widgets, conversation management sidebar, usage metrics, and a simpler dashboard stylesheet pipeline.
+- **Infrastructure**: Supabase integration (Auth + Storage + PostgreSQL), session rehydration, per-user caching with TTL eviction, consistent structured logging, and 10 pinned Python dependencies.
 
 **What still needs attention:**
-- **Security hardening**: Zero SRI hashes on all 9 CDN dependencies, unpinned CDN versions, localStorage token storage, thread-unsafe logout.
-- **Code quality**: Zero test coverage, ~90+ global JS functions with no module system, duplicated auth utilities in profile page.
-- **Performance**: O(n²) particle animation, DataFrame copy per execution, O(n²) correlations.
-- **Accessibility**: Desktop-only dashboard (no responsive design), keyboard-inaccessible nav items, missing ARIA live regions on dashboard/chat.
+- **Security hardening**: CDN resources still ship without SRI hashes, CDN versions are not fully pinned, and auth tokens still live in `localStorage`.
+- **Code quality**: Zero test coverage, ~90+ global JS functions with no module system, and duplicated auth utilities in `profile.html`.
+- **Performance**: `get_full_data()` still returns full datasets, particle animation remains O(n²), and correlation computation is still expensive for wide tables.
+- **Accessibility**: The dashboard is still desktop-first, nav items remain keyboard-inaccessible, and dashboard/chat status changes still lack proper ARIA live regions.
 
-**As a personal/demo tool**: Excellent. Feature-rich, visually polished, architecturally well-layered.
-**As a production application**: Needs Phase 1-2 improvements — particularly SRI hashes, a test suite, token refresh, thread-safe logout, and responsive design.
+**As a personal/demo tool**: strong and polished.
+**As a production application**: it still needs Phase 1-2 work, especially tests, SRI hashes, logout cleanup, and responsive accessibility improvements.
 
-The codebase is clean, well-modularized, and readable. The service layer pattern and multi-session architecture provide a strong foundation for continued growth without accumulating technical debt.
+The codebase is cleaner than before: shared helpers are isolated, session logic is centralized, and the dashboard asset pipeline is simpler. The remaining gaps are now mostly hardening and UX/accessibility work rather than structural debt.

@@ -278,14 +278,10 @@ def update_profile(user_id: str, display_name: str) -> dict:
 
 def logout(access_token: str) -> bool:
     """Sign out the user (invalidates the refresh token server-side)."""
-    sb = get_supabase()
     try:
-        sb.auth._headers = {
-            **sb.auth._headers,
-            "Authorization": f"Bearer {access_token}",
-        }
-        sb.auth.sign_out()
-        return True
+        # Create fresh client to not mutate shared global client headers concurrently
+        sb = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        sb.auth._headers.update({"Authorization": f"Bearer {access_token}"})
     except Exception as e:
         logger.error("Logout error: %s", e)
         return False

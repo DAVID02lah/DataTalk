@@ -8,7 +8,7 @@ subprocess timeout guard.
 import ast
 import json
 import re
-import threading
+import multiprocessing
 import traceback
 
 import numpy as np
@@ -16,6 +16,7 @@ import pandas as pd
 
 from src.core import app_config
 from src.core.errors import CodeExecutionError
+from src.core.value_utils import to_native
 
 EXEC_TIMEOUT = app_config.EXEC_TIMEOUT
 MAX_CODE_LENGTH = 10000
@@ -50,6 +51,7 @@ FORBIDDEN_NAMES = {
     "pathlib",
     "shutil",
     "builtins",
+    "__builtins__",
     "importlib",
     "ctypes",
 }
@@ -137,57 +139,56 @@ def _validate_generated_code(code_string):
     _SafetyVisitor().visit(tree)
 
 
+def _worker_target(code_string, df, queue):
+    safe_builtins = _make_safe_builtins()
+    exec_globals = {
+        "__builtins__": safe_builtins,
+        "pd": pd,
+        "pandas": pd,
+        "np": np,
+        "numpy": np,
+        "json": json,
+        "df": df.copy(),
+        "result": None,
+    }
+
+    exec_globals["df"].columns = [
+        re.sub(r"\s+", " ", str(col)).strip() for col in exec_globals["df"].columns
+    ]
+
+    try:
+        compiled = compile(code_string, "<llm_code>", "exec")
+        exec(compiled, exec_globals)
+        queue.put({"ok": True, "result": exec_globals.get("result")})
+    except Exception as exc:
+        tb = traceback.format_exc()
+        queue.put({"ok": False, "error": str(exc), "traceback": tb})
+
+
 def _run_with_timeout(code_string, df, timeout_seconds):
-    """Run analysis code in a thread and force-stop on timeout.
+    """Run analysis code in a process and force-stop on timeout.
 
-    Uses threading instead of multiprocessing to avoid the heavy cost of
-    spawning a new Python process and pickling the DataFrame on every call.
+    Uses multiprocessing to securely isolate execution and guarantee termination
+    upon timeout, mitigating Infinite loop and CPU consumption vulnerabilities.
     """
-    result_holder = {}
+    ctx = multiprocessing.get_context("spawn")
+    queue = ctx.Queue()
 
-    def _target():
-        safe_builtins = _make_safe_builtins()
-        exec_globals = {
-            "__builtins__": safe_builtins,
-            "pd": pd,
-            "pandas": pd,
-            "np": np,
-            "numpy": np,
-            "json": json,
-            "df": df.copy(),
-            "result": None,
-        }
+    process = ctx.Process(target=_worker_target, args=(code_string, df, queue), daemon=True)
+    process.start()
+    process.join(timeout_seconds)
 
-        exec_globals["df"].columns = [
-            re.sub(r"\s+", " ", str(col)).strip() for col in exec_globals["df"].columns
-        ]
-
-        try:
-            compiled = compile(code_string, "<llm_code>", "exec")
-            exec(compiled, exec_globals)
-            result_holder["ok"] = True
-            result_holder["result"] = exec_globals.get("result")
-        except Exception as exc:
-            tb = traceback.format_exc()
-            result_holder["ok"] = False
-            result_holder["error"] = str(exc)
-            result_holder["traceback"] = tb
-
-    thread = threading.Thread(target=_target, daemon=True)
-    thread.start()
-    thread.join(timeout_seconds)
-
-    if thread.is_alive():
+    if process.is_alive():
+        process.terminate()
+        process.join()  # Ensure cleanup completes before continuing
         raise TimeoutError(
             f"Code execution timed out (exceeded {timeout_seconds} seconds). Try a simpler analysis."
         )
 
-    if not result_holder:
+    if not queue.empty():
+        result_holder = queue.get()
+    else:
         raise RuntimeError("Code execution ended without returning a result.")
-
-    if not result_holder.get("ok"):
-        err = result_holder.get("error", "Unknown execution error")
-        tb = result_holder.get("traceback", "")
         tb_lines = tb.strip().split("\n") if tb else []
         short_tb = "\n".join(tb_lines[-3:])
         raise RuntimeError(f"Code execution error: {err}\n{short_tb}")
@@ -293,14 +294,4 @@ def _deep_convert(obj):
         return obj.tolist()
     if isinstance(obj, pd.Timestamp):
         return str(obj)
-    if hasattr(obj, "item"):
-        try:
-            return obj.item()
-        except (ValueError, TypeError):
-            return str(obj)
-    try:
-        if pd.isna(obj):
-            return None
-    except (TypeError, ValueError):
-        pass
-    return obj
+    return to_native(obj)

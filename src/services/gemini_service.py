@@ -11,10 +11,7 @@ import json
 import logging
 import re
 from google import genai
-from dotenv import load_dotenv
 from src.core.errors import LLMServiceError
-
-load_dotenv()
 
 logger = logging.getLogger("data_talk.gemini")
 
@@ -23,6 +20,16 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Model to use (override via GEMINI_MODEL_ID env var)
 MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.1-flash-lite-preview")
+
+
+def _extract_usage_dict(response):
+    """Gemini may omit usage metadata, so normalise missing fields to zeroes."""
+    meta = getattr(response, "usage_metadata", None)
+    return {
+        "input_tokens": getattr(meta, "prompt_token_count", 0) or 0,
+        "output_tokens": getattr(meta, "candidates_token_count", 0) or 0,
+        "total_tokens": getattr(meta, "total_token_count", 0) or 0,
+    }
 
 
 SYSTEM_PROMPT = """You are DATA TALK AI — an expert data analyst assistant.
@@ -156,13 +163,9 @@ def analyse_data(question, data_context, chat_history=None):
             model=MODEL_ID,
             contents=full_prompt,
         )
-        usage = response.usage_metadata
-        usage_dict = {
-            "input_tokens": usage.prompt_token_count,
-            "output_tokens": usage.candidates_token_count,
-            "total_tokens": usage.total_token_count
-        }
-        result = _parse_response(response.text)
+        response_text = str(getattr(response, "text", "") or "")
+        usage_dict = _extract_usage_dict(response)
+        result = _parse_response(response_text)
         result["usage"] = usage_dict
         return result
     except Exception as e:
@@ -197,13 +200,8 @@ def _call_llm_for_code(full_prompt):
             model=MODEL_ID,
             contents=full_prompt,
         )
-        code = response.text.strip()
-        usage = response.usage_metadata
-        usage_dict = {
-            "input_tokens": usage.prompt_token_count,
-            "output_tokens": usage.candidates_token_count,
-            "total_tokens": usage.total_token_count
-        }
+        code = str(getattr(response, "text", "") or "").strip()
+        usage_dict = _extract_usage_dict(response)
 
         return code, usage_dict
     except Exception as e:
@@ -360,12 +358,7 @@ Return ONLY the explanation text, no JSON, no code fences."""
             model=MODEL_ID,
             contents=prompt,
         )
-        usage = response.usage_metadata
-        return response.text.strip(), {
-            "input_tokens": usage.prompt_token_count,
-            "output_tokens": usage.candidates_token_count,
-            "total_tokens": usage.total_token_count
-        }
+        return str(getattr(response, "text", "") or "").strip(), _extract_usage_dict(response)
     except Exception as e:
         logger.error("Interpretation error: %s", e)
         raise LLMServiceError(f"Failed to interpret results: {e}")

@@ -19,6 +19,7 @@ import re
 import json
 import time
 import logging
+import ipaddress
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from flask import Flask, request, jsonify, send_from_directory, g, Response, stream_with_context
@@ -28,6 +29,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 from src.core import app_config
+from src.core.pagination import paginate
 from src.core.app_state import SessionManager
 from src.services import data_service
 from src.services import gemini_service
@@ -40,7 +42,6 @@ from src.services.analysis_pipeline import run_analysis_pipeline
 from src.services.dashboard_store import (
     get_session_dashboard,
     load_dashboard_store,
-    resolve_requested_session_id,
     save_dashboard_store,
 )
 
@@ -83,10 +84,6 @@ ALLOWED_HTML_FILES = {
     "login.html",
     "profile.html",
 }
-ALLOWED_STATIC_FILES = {
-    "styles.css",
-    "dashboard.css",
-}
 ALLOWED_STATIC_PREFIXES = (
     "assets/",
     "js/",
@@ -116,18 +113,19 @@ def _log_token_usage(usage, label="LLM interaction"):
                total_tokens=usage.get("total_tokens", 0))
 
 
-def _filename_for_persistence(filename):
-    """Persist a non-null filename because chat_sessions.filename is constrained in Supabase."""
-    value = str(filename or "").strip()
-    return value if value else EMPTY_SESSION_FILE_SENTINEL
+def _activate_file(state, filename, active_session=None):
+    """Keep the active file and active session aligned so route handlers only need one call."""
+    state.active_file["filename"] = filename
+    if active_session is None:
+        active_session = chat_session_service.ensure_active_session(state, filename=filename)
+    if filename and not active_session.get("filename"):
+        active_session["filename"] = filename
+    return active_session
 
 
-def _filename_from_persistence(filename):
-    """Translate sentinel filenames back to None for runtime state."""
-    value = str(filename or "").strip()
-    if not value or value == EMPTY_SESSION_FILE_SENTINEL:
-        return None
-    return value
+def _get_active_session(state):
+    """Resolve the active session once so callers can reuse it for related payloads."""
+    return chat_session_service.ensure_active_session(state, filename=state.active_file.get("filename"))
 
 
 def _record_and_log_usage(state, usage, label="LLM interaction"):
@@ -176,31 +174,12 @@ def _get_dataframe(filename, user_id, state):
         return df
 
 
-def _paginate(items, page=1, per_page=app_config.DEFAULT_PAGE_SIZE):
-    """Apply offset/limit pagination to a list and return paginated result with metadata."""
-    total = len(items)
-    per_page = max(1, min(per_page, app_config.MAX_PAGE_SIZE))
-    total_pages = max(1, -(-total // per_page))
-    page = max(1, min(page, total_pages))
-    start = (page - 1) * per_page
-    return {
-        "items": items[start:start + per_page],
-        "page": page,
-        "per_page": per_page,
-        "total": total,
-        "total_pages": total_pages,
-    }
-
-
 def _build_chat_session_payload(state):
     """Return active-session context so clients can update UI without extra round-trips."""
     chat_session_service.enforce_session_limit(state, app_config.MAX_CHAT_SESSIONS)
-    history = chat_session_service.get_active_messages(state)
+    active_session = _get_active_session(state)
+    history = chat_session_service.get_active_messages(state, active_session=active_session)
     history_window = history[-app_config.DEFAULT_PAGE_SIZE:]
-    active_session = chat_session_service.ensure_active_session(
-        state,
-        filename=state.active_file.get("filename"),
-    )
     return {
         "active_session_id": state.active_session_id,
         "active_filename": active_session.get("filename") or state.active_file.get("filename"),
@@ -216,14 +195,10 @@ def _build_chat_session_payload(state):
 
 def _build_chat_history_snapshot(state) -> tuple[str, dict]:
     """Capture the exact payload to persist before any async handoff occurs."""
+    active_session = _get_active_session(state)
     payload = chat_session_service.build_persisted_payload(state)
-    active_session = chat_session_service.ensure_active_session(
-        state,
-        filename=state.active_file.get("filename"),
-    )
-    persisted_filename = _filename_for_persistence(
-        active_session.get("filename") or state.active_file.get("filename")
-    )
+    active_filename = str(active_session.get("filename") or state.active_file.get("filename") or "").strip()
+    persisted_filename = active_filename if active_filename else EMPTY_SESSION_FILE_SENTINEL
     return persisted_filename, payload
 
 
@@ -278,7 +253,12 @@ def _load_chat_history_for_user(user_id):
 
         if result.data:
             session = result.data[0]
-            restored_filename = _filename_from_persistence(session.get("filename"))
+            restored_filename_raw = str(session.get("filename") or "").strip()
+            restored_filename = (
+                None
+                if not restored_filename_raw or restored_filename_raw == EMPTY_SESSION_FILE_SENTINEL
+                else restored_filename_raw
+            )
             state.active_file["filename"] = restored_filename
             chat_session_service.restore_from_persisted_payload(
                 state,
@@ -418,7 +398,7 @@ def serve_static(filename):
     if normalized in ALLOWED_HTML_FILES:
         return send_from_directory(PUBLIC_DIR, normalized)
 
-    if normalized not in ALLOWED_STATIC_FILES and not normalized.startswith(ALLOWED_STATIC_PREFIXES):
+    if not normalized.startswith(ALLOWED_STATIC_PREFIXES):
         return jsonify({"error": "Static file not found"}), 404
 
     return send_from_directory(BASE_DIR, filename)
@@ -569,13 +549,11 @@ def upload_file():
     # Parse from the uploaded stream we already have to avoid a second storage download.
     df = data_service.load_uploaded_dataframe(file, filename)
     summary = data_service.get_summary(df, include_describe=False)
-    state.active_file["filename"] = filename
 
     state.query_cache.clear()
     state.clear_file_cache()
     state.set_cached(filename, "df", df)
-    active_session = chat_session_service.ensure_active_session(state, filename=filename)
-    active_session["filename"] = filename
+    _activate_file(state, filename)
     chat_session_service.enforce_session_limit(state, app_config.MAX_CHAT_SESSIONS)
     _save_chat_history_async(user_id=g.user_id, state=state)
 
@@ -603,10 +581,7 @@ def list_uploaded_files():
 def data_summary(filename):
     """Get summary stats for a specific uploaded file."""
     state = _get_user_state()
-    state.active_file["filename"] = filename
-    active_session = chat_session_service.ensure_active_session(state, filename=filename)
-    if not active_session.get("filename"):
-        active_session["filename"] = filename
+    _activate_file(state, filename)
     df = _get_dataframe(filename, user_id=g.user_id, state=state)
     summary = data_service.get_summary(df, include_describe=False)
     return jsonify({"filename": filename, "summary": summary})
@@ -617,10 +592,7 @@ def data_summary(filename):
 def get_full_data(filename):
     """Get the full dataset for the data connector."""
     state = _get_user_state()
-    state.active_file["filename"] = filename
-    active_session = chat_session_service.ensure_active_session(state, filename=filename)
-    if not active_session.get("filename"):
-        active_session["filename"] = filename
+    _activate_file(state, filename)
     df = _get_dataframe(filename, user_id=g.user_id, state=state)
     data = [df.columns.tolist()] + df.fillna("").values.tolist()
     return jsonify({"filename": filename, "data": data})
@@ -665,11 +637,7 @@ def save_full_data(filename):
     state.query_cache.clear()
     state.clear_file_cache()
     state.set_cached(filename, "df", df)
-    state.active_file["filename"] = filename
-
-    active_session = chat_session_service.ensure_active_session(state, filename=filename)
-    if not active_session.get("filename"):
-        active_session["filename"] = filename
+    _activate_file(state, filename)
 
     summary = data_service.get_summary(df, include_describe=False)
     _save_chat_history_async(user_id=g.user_id, state=state)
@@ -710,15 +678,7 @@ Return ONLY a JSON array of 4 strings, no other text. Example:
             model=gemini_service.MODEL_ID,
             contents=prompt,
         )
-        usage_metadata = getattr(response, "usage_metadata", None)
-        if usage_metadata is None:
-            usage_dict = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-        else:
-            usage_dict = {
-                "input_tokens": getattr(usage_metadata, "prompt_token_count", 0) or 0,
-                "output_tokens": getattr(usage_metadata, "candidates_token_count", 0) or 0,
-                "total_tokens": getattr(usage_metadata, "total_token_count", 0) or 0,
-            }
+        usage_dict = gemini_service._extract_usage_dict(response)
         _record_and_log_usage(state, usage_dict, "Suggest Questions")
 
         text_raw = getattr(response, "text", "")
@@ -741,10 +701,10 @@ Return ONLY a JSON array of 4 strings, no other text. Example:
 # ==============================================================
 
 def _parse_chat_request():
-    """Parse and validate a chat request. Returns (message, filename, user_id, state, skip_cache) or a Flask error response."""
+    """Parse and validate a chat request. Returns (message, filename, user_id, state, skip_cache) or raises DataTalkError."""
     data = request.get_json()
     if not data or "message" not in data:
-        return jsonify({"error": "No message provided"}), 400
+        raise DataTalkError("No message provided", status_code=400, error_type="validation_error")
 
     user_id = g.user_id
     state = _get_user_state()
@@ -752,22 +712,19 @@ def _parse_chat_request():
     if requested_session_id:
         activated = chat_session_service.set_active_session(state, requested_session_id)
         if not activated:
-            return _error_response("Chat session not found", status_code=404, error_type="session_not_found")
+            raise DataTalkError("Chat session not found", status_code=404, error_type="session_not_found")
 
     message = data["message"]
     filename = data.get("filename") or state.active_file.get("filename")
-    active_session = chat_session_service.ensure_active_session(state, filename=filename)
     if not filename:
-        filename = active_session.get("filename")
+        filename = chat_session_service.ensure_active_session(state, filename=filename).get("filename")
     if filename:
-        state.active_file["filename"] = filename
-        if not active_session.get("filename"):
-            active_session["filename"] = filename
+        _activate_file(state, filename)
 
     skip_cache = data.get("skip_cache", False)
 
     if not filename:
-        return _error_response(
+        raise DataTalkError(
             "Please upload a dataset first! Go to the **Data Connector** tab and upload a CSV or Excel file.",
             status_code=400,
             error_type="no_file"
@@ -785,10 +742,7 @@ def chat():
     Body: { "message": "...", "filename": "..." (optional), "skip_cache": false }
     Returns: { "text": "...", "chart": {...} or null, "cached": bool }
     """
-    parsed = _parse_chat_request()
-    if isinstance(parsed, tuple) and len(parsed) == 2:
-        return parsed  # Error response
-    message, filename, user_id, state, skip_cache = parsed
+    message, filename, user_id, state, skip_cache = _parse_chat_request()
     usage_service.record_message_request(state, app_config.RATE_LIMIT)
 
     for event_type, payload in run_analysis_pipeline(
@@ -823,10 +777,7 @@ def chat_stream():
     Body: { "message": "...", "filename": "..." (optional), "skip_cache": false }
     Events: phase, result, error, done
     """
-    parsed = _parse_chat_request()
-    if isinstance(parsed, tuple) and len(parsed) == 2:
-        return parsed  # Error response
-    message, filename, user_id, state, skip_cache = parsed
+    message, filename, user_id, state, skip_cache = _parse_chat_request()
     usage_service.record_message_request(state, app_config.RATE_LIMIT)
 
     def generate():
@@ -861,18 +812,20 @@ def get_chat_history():
     Returns most recent messages first; page 1 = latest messages.
     """
     state = _get_user_state()
-    history = chat_session_service.get_active_messages(state)
+    active_session = _get_active_session(state)
+    history = chat_session_service.get_active_messages(state, active_session=active_session)
 
     if not history:
         _load_chat_history_for_user(g.user_id)
         state = _get_user_state()
-        history = chat_session_service.get_active_messages(state)
+        active_session = _get_active_session(state)
+        history = chat_session_service.get_active_messages(state, active_session=active_session)
 
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", app_config.DEFAULT_PAGE_SIZE, type=int)
 
     reversed_history = list(reversed(history))
-    result = _paginate(reversed_history, page, per_page)
+    result = paginate(reversed_history, page=page, per_page=per_page, max_page_size=app_config.MAX_PAGE_SIZE)
 
     return jsonify({
         "session_id": state.active_session_id,
@@ -931,7 +884,7 @@ def create_chat_session():
     state.chat_sessions.insert(0, session)
     state.active_session_id = session["id"]
     state.chat_history = session["messages"]
-    state.active_file["filename"] = requested_filename
+    _activate_file(state, requested_filename, session)
     chat_session_service.enforce_session_limit(state, app_config.MAX_CHAT_SESSIONS)
 
     _save_chat_history_async(user_id=g.user_id, state=state)
@@ -948,10 +901,7 @@ def activate_chat_session(session_id):
     if not session:
         return _error_response("Chat session not found", status_code=404, error_type="session_not_found")
 
-    if session.get("filename"):
-        state.active_file["filename"] = session.get("filename")
-    else:
-        state.active_file["filename"] = None
+    _activate_file(state, session.get("filename"), session)
 
     payload = _build_chat_session_payload(state)
     return jsonify({"success": True, **payload})
@@ -968,10 +918,9 @@ def delete_chat_session(session_id):
 
     if state.active_session_id:
         active = chat_session_service.set_active_session(state, state.active_session_id)
-        if active and active.get("filename"):
-            state.active_file["filename"] = active.get("filename")
+        _activate_file(state, active.get("filename") if active else None, active)
     else:
-        state.active_file["filename"] = None
+        _activate_file(state, None)
 
     _save_chat_history_async(user_id=g.user_id, state=state)
     payload = _build_chat_session_payload(state)
@@ -1009,6 +958,7 @@ def clear_chat():
     state.clear_file_cache()
     state.dashboard_store_cache = None
     state.dashboard_store_cached_at = None
+    sb_service = None
     try:
         sb_service = auth_service.get_supabase_service()
         sb_service.table("chat_sessions").delete().eq("user_id", g.user_id).execute()
@@ -1016,11 +966,11 @@ def clear_chat():
         logger.error("Chat history clear failed from Supabase: %s", e)
 
     # Keep dashboard visuals aligned with clear-chat behavior.
-    try:
-        sb_service = auth_service.get_supabase_service()
-        sb_service.table("dashboard_configs").delete().eq("user_id", g.user_id).execute()
-    except Exception as e:
-        logger.error("Dashboard clear failed from Supabase during chat clear: %s", e)
+    if sb_service is not None:
+        try:
+            sb_service.table("dashboard_configs").delete().eq("user_id", g.user_id).execute()
+        except Exception as e:
+            logger.error("Dashboard clear failed from Supabase during chat clear: %s", e)
 
     return jsonify({"success": True})
 
@@ -1035,7 +985,7 @@ def get_dashboard():
     """Get the saved dashboard configuration for the active conversation session."""
     state = _get_user_state()
     try:
-        session_id = resolve_requested_session_id(state, request_args=request.args)
+        session_id = chat_session_service.resolve_requested_session_id(state, request_args=request.args)
         config = load_dashboard_store(g.user_id, session_id, state=state)
         session_config = get_session_dashboard(config, session_id)
         return jsonify({
@@ -1064,7 +1014,7 @@ def save_dashboard():
         raise ValidationError("Invalid dashboard payload")
 
     state = _get_user_state()
-    session_id = resolve_requested_session_id(state, data)
+    session_id = chat_session_service.resolve_requested_session_id(state, request_data=data)
 
     try:
         config = load_dashboard_store(g.user_id, session_id, state=state)
@@ -1088,7 +1038,7 @@ def pin_chart():
         return jsonify({"error": "No chart data provided"}), 400
 
     state = _get_user_state()
-    session_id = resolve_requested_session_id(state, data)
+    session_id = chat_session_service.resolve_requested_session_id(state, request_data=data)
 
     try:
         config = load_dashboard_store(g.user_id, session_id, state=state)
@@ -1130,7 +1080,7 @@ def remove_chart(chart_id):
     """Remove a chart from the active session dashboard."""
     state = _get_user_state()
     try:
-        session_id = resolve_requested_session_id(state, request_args=request.args)
+        session_id = chat_session_service.resolve_requested_session_id(state, request_args=request.args)
         config = load_dashboard_store(g.user_id, session_id, state=state)
         session_config = get_session_dashboard(config, session_id)
         session_config["charts"] = [c for c in session_config.get("charts", []) if c.get("id") != chart_id]
@@ -1255,7 +1205,6 @@ def _generate_self_signed_cert():
 
 
 if __name__ == "__main__":
-    import ipaddress
 
     ssl_context = None
     protocol = "http"

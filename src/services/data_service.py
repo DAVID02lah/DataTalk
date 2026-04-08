@@ -8,6 +8,7 @@ import io
 import warnings
 import pandas as pd
 from werkzeug.utils import secure_filename
+from src.core.value_utils import to_native
 from src.services import auth_service
 from src.core.errors import DatasetNotFoundError, ValidationError, DataProcessingError
 
@@ -255,7 +256,7 @@ def get_summary(df, include_describe=False):
             desc = df.describe(include="all").fillna("").to_dict()
             clean_desc = {}
             for col, stats in desc.items():
-                clean_desc[col] = {k: _to_native(v) for k, v in stats.items()}
+                clean_desc[col] = {k: to_native(v) for k, v in stats.items()}
             summary["describe"] = clean_desc
         except Exception:
             pass
@@ -299,6 +300,15 @@ def clean_column_names(df):
     return df
 
 
+def _format_schema_value(value, float_fmt=False):
+    native_value = to_native(value)
+    if native_value is None or native_value == "N/A":
+        return "N/A"
+    if not isinstance(native_value, (int, float)):
+        return str(native_value)
+    return f"{native_value:.2f}" if float_fmt else str(native_value)
+
+
 def get_schema_string(df, max_tokens=15000):
     """
     Create a rich context description of the DataFrame for LLM code generation.
@@ -322,20 +332,12 @@ def get_schema_string(df, max_tokens=15000):
 
         if pd.api.types.is_numeric_dtype(df[col]):
             desc = df[col].describe()
-            
-            def _fmt(val, float_fmt=False):
-                v = _to_native(val)
-                if v is None or v == "N/A": 
-                    return "N/A"
-                if not isinstance(v, (int, float)):
-                    return str(v)
-                return f"{v:.2f}" if float_fmt else str(v)
 
-            line += (f" | min={_fmt(desc.get('min', 'N/A'))}, "
-                     f"mean={_fmt(desc.get('mean', 'N/A'), True)}, "
-                     f"median={_fmt(desc.get('50%', 'N/A'))}, "
-                     f"max={_fmt(desc.get('max', 'N/A'))}, "
-                     f"std={_fmt(desc.get('std', 'N/A'), True)}")
+            line += (f" | min={_format_schema_value(desc.get('min', 'N/A'))}, "
+                     f"mean={_format_schema_value(desc.get('mean', 'N/A'), True)}, "
+                     f"median={_format_schema_value(desc.get('50%', 'N/A'))}, "
+                     f"max={_format_schema_value(desc.get('max', 'N/A'))}, "
+                     f"std={_format_schema_value(desc.get('std', 'N/A'), True)}")
         elif pd.api.types.is_object_dtype(df[col]) or isinstance(df[col].dtype, pd.CategoricalDtype):
             top_vals = df[col].value_counts().head(10)
             if len(top_vals) > 0:
@@ -578,13 +580,3 @@ def get_profile_string(profile):
     return "\n".join(lines)
 
 
-def _to_native(val):
-    """Convert numpy/pandas types to native Python types for JSON serialization."""
-    try:
-        if pd.isna(val):
-            return None
-    except (TypeError, ValueError):
-        pass
-    if hasattr(val, "item"):
-        return val.item()
-    return val

@@ -96,6 +96,8 @@ Then navigate to `http://localhost:5000` in your web browser.
 ├── code_executor.py       # Sandboxed subprocess execution with AST validation
 ├── app_state.py           # In-memory query cache (LRU) and file computation cache
 ├── app_config.py          # Environment variable parsing
+├── pagination.py          # Shared pagination helper for history/list endpoints
+├── value_utils.py         # Native pandas/numpy scalar conversion helpers
 ├── auth_service.py        # Supabase Auth integration, JWT verification, route protection
 ├── dashboard.html         # Main SPA: sidebar, chat pane, data grid, dashboard
 ├── index.html             # Landing page
@@ -107,11 +109,8 @@ Then navigate to `http://localhost:5000` in your web browser.
 │   └── constants.js       # Configuration constants (chart heights, timeouts)
 ├── css/
 │   ├── styles.css         # Landing page styles (global typography, colors, buttons)
-│   ├── dashboard.css      # Dashboard CSS manifest (imports all dashboard modules)
-│   ├── dashboard-layout.css   # Sidebar, navigation, main container layout
-│   ├── dashboard-chat.css     # Chat pane, message bubbles, input styling
-│   ├── dashboard-grid.css     # Handsontable grid customization
-│   ├── dashboard-overlays.css # Modal overlays, dropdowns, tooltips
+│   ├── dashboard-layout.css   # Sidebar, navigation, main container, dashboard grid
+│   ├── dashboard-chat.css     # Chat pane, overlays, message bubbles, input styling
 │   └── data-dashboard.css     # GridStack dashboard, chart containers
 ├── assets/                # Custom illustrated PNG characters (7 files)
 ├── requirements.txt       # Python dependencies (pinned versions)

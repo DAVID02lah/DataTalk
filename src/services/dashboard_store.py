@@ -12,8 +12,6 @@ from typing import Any
 
 from src.core import app_config
 from src.services import auth_service
-from src.services import chat_session_service
-from src.core.errors import ValidationError
 
 _DASHBOARD_STORE_VERSION = 2
 
@@ -68,32 +66,6 @@ def normalise_dashboard_store(raw_config: Any, fallback_session_id: str) -> dict
     store["sessions"] = sessions
     store["version"] = _DASHBOARD_STORE_VERSION
     return store
-
-
-def resolve_requested_session_id(
-    state,
-    request_args: Mapping[str, Any] | None = None,
-    request_data: Mapping[str, Any] | None = None,
-) -> str:
-    """Resolve and activate request session ids to prevent cross-session writes."""
-    requested = ""
-    if isinstance(request_data, Mapping):
-        requested = str(request_data.get("session_id") or "").strip()
-
-    if not requested and isinstance(request_args, Mapping):
-        requested = str(request_args.get("session_id") or "").strip()
-
-    if requested:
-        active = chat_session_service.set_active_session(state, requested)
-        if not active:
-            raise ValidationError("Invalid session_id")
-        return requested
-
-    active = chat_session_service.ensure_active_session(
-        state,
-        filename=state.active_file.get("filename"),
-    )
-    return str(active.get("id") or "")
 
 
 def _is_dashboard_cache_fresh(state) -> bool:
