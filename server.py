@@ -64,8 +64,12 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 
+import atexit
+
 session_mgr = SessionManager()
 history_write_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chat-history")
+# Ensure in-flight async history writes complete before process exit to avoid data loss.
+atexit.register(history_write_executor.shutdown, wait=True)
 
 def _get_user_id_or_ip():
     """Return user_id if authenticated, else IP address for rate limiting."""
@@ -152,6 +156,12 @@ def _get_user_state():
         )
     chat_session_service.enforce_session_limit(state, app_config.MAX_CHAT_SESSIONS)
     return state
+
+
+
+def _is_empty_row(values) -> bool:
+    """Return True if every cell in a row is None or whitespace-only."""
+    return all(cell is None or str(cell).strip() == "" for cell in values)
 
 
 def _get_dataframe(filename, user_id, state):
@@ -245,6 +255,9 @@ def _load_chat_history_for_user(user_id):
     usage_service.ensure_usage_state(state)
     try:
         sb_service = auth_service.get_supabase_service()
+        # Schema contract: one row per user — all sessions are serialised into
+        # the `history` JSON column. If the schema ever migrates to per-session
+        # rows, this limit(1) must be removed and the loop below updated.
         result = sb_service.table("chat_sessions") \
             .select("filename, history") \
             .eq("user_id", user_id) \
@@ -623,10 +636,8 @@ def save_full_data(filename):
         normalized = [row[i] if i < len(row) else "" for i in range(len(headers))]
         rows.append(normalized)
 
-    # Handsontable can include trailing empty rows after edits; trimming prevents accidental row inflation.
-    def _is_empty_row(values):
-        return all(cell is None or str(cell).strip() == "" for cell in values)
-
+    # Handsontable appends trailing empty rows during edits; strip them to
+    # prevent unintentional row count inflation on save.
     while rows and _is_empty_row(rows[-1]):
         rows.pop()
 
@@ -943,15 +954,10 @@ def clear_chat():
     state.chat_history = []
     state.chat_sessions = []
     state.active_session_id = None
+    # Delegate zero-state initialisation to the service layer so both places
+    # stay in sync if the usage_totals schema ever gains new fields.
+    state.usage_totals = None  # type: ignore[assignment]  # forces ensure_usage_state to reinitialise
     usage_service.ensure_usage_state(state)
-    state.usage_totals = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "cost_usd": 0.0,
-        "cost_myr": 0.0,
-        "updated_at": None,
-    }
     state.message_request_times.clear()
     state.query_cache.clear()
     state.active_file["filename"] = None

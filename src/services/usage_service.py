@@ -108,15 +108,19 @@ def _parse_rate_limit(rate_limit: str) -> tuple[int, int]:
     return limit, unit_seconds
 
 
+def _evict_expired_requests(state, cutoff: float) -> None:
+    """Remove timestamps older than the rate-limit window from the sliding window deque."""
+    while state.message_request_times and state.message_request_times[0] < cutoff:
+        state.message_request_times.popleft()
+
+
 def record_message_request(state, rate_limit: str, now_ts: float | None = None) -> None:
     ensure_usage_state(state)
     now_val = now_ts if now_ts is not None else time.time()
     limit, window_seconds = _parse_rate_limit(rate_limit)
 
-    # Keep only recent timestamps in the active window.
-    cutoff = now_val - window_seconds
-    while state.message_request_times and state.message_request_times[0] < cutoff:
-        state.message_request_times.popleft()
+    # Trim expired entries before counting to keep the window accurate.
+    _evict_expired_requests(state, now_val - window_seconds)
 
     if len(state.message_request_times) < max(limit, 1):
         state.message_request_times.append(now_val)
@@ -130,9 +134,7 @@ def get_request_budget(state, rate_limit: str, now_ts: float | None = None) -> d
     now_val = now_ts if now_ts is not None else time.time()
 
     limit, window_seconds = _parse_rate_limit(rate_limit)
-    cutoff = now_val - window_seconds
-    while state.message_request_times and state.message_request_times[0] < cutoff:
-        state.message_request_times.popleft()
+    _evict_expired_requests(state, now_val - window_seconds)
 
     used = min(len(state.message_request_times), limit)
     remaining = max(limit - used, 0)

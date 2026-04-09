@@ -166,10 +166,15 @@ def _worker_target(code_string, df, queue):
 
 
 def _run_with_timeout(code_string, df, timeout_seconds):
-    """Run analysis code in a process and force-stop on timeout.
+    """Run analysis code in a subprocess and force-terminate on timeout.
 
-    Uses multiprocessing to securely isolate execution and guarantee termination
-    upon timeout, mitigating Infinite loop and CPU consumption vulnerabilities.
+    multiprocessing ensures the OS reclaims the child process on termination,
+    preventing CPU/memory leaks from infinite loops or blocking operations.
+
+    SECURITY NOTE: This is a best-effort sandbox, not a full isolation boundary.
+    The Python environment is not hardened against determined adversaries.
+    Do not expose this endpoint to untrusted public users without additional
+    controls (e.g. seccomp, container isolation, network restrictions).
     """
     ctx = multiprocessing.get_context("spawn")
     queue = ctx.Queue()
@@ -180,20 +185,15 @@ def _run_with_timeout(code_string, df, timeout_seconds):
 
     if process.is_alive():
         process.terminate()
-        process.join()  # Ensure cleanup completes before continuing
+        process.join()  # Ensure OS-level cleanup before propagating the error.
         raise TimeoutError(
             f"Code execution timed out (exceeded {timeout_seconds} seconds). Try a simpler analysis."
         )
 
     if not queue.empty():
-        result_holder = queue.get()
-    else:
-        raise RuntimeError("Code execution ended without returning a result.")
-        tb_lines = tb.strip().split("\n") if tb else []
-        short_tb = "\n".join(tb_lines[-3:])
-        raise RuntimeError(f"Code execution error: {err}\n{short_tb}")
+        return queue.get().get("result")
 
-    return result_holder.get("result")
+    raise RuntimeError("Code execution ended without returning a result.")
 
 
 def execute_analysis_code(code_string, df):

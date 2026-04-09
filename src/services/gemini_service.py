@@ -19,7 +19,8 @@ logger = logging.getLogger("data_talk.gemini")
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Model to use (override via GEMINI_MODEL_ID env var)
-MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.1-flash-lite-preview")
+# Default to the correct model name; override via GEMINI_MODEL_ID in .env if needed.
+MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-2.0-flash-lite")
 
 
 def _extract_usage_dict(response):
