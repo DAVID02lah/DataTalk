@@ -790,10 +790,8 @@ async function syncActiveSessionFile() {
             silent: true,
             forceReload: true,
         });
-        return;
-    }
-
-    if (!path) {
+    } else {
+        // No file is bound to this session — reset the data connector panel.
         clearActiveFileUI();
     }
 }
