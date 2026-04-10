@@ -435,7 +435,6 @@ def get_data_profile(df):
     for col in df.columns:
         role = "unknown"
         nunique = df[col].nunique()
-        null_pct = df[col].isnull().mean()
 
         if col in datetime_cols or col.lower() in ("timestamp", "date", "datetime", "time", "created_at", "updated_at"):
             role = "timestamp"
@@ -474,7 +473,6 @@ def get_data_profile(df):
     has_measures = role_counts.get("measure", 0) > 0
     has_ordinals = role_counts.get("ordinal", 0) > 0
     has_binary = role_counts.get("binary", 0) > 0
-    has_free_text = role_counts.get("free_text", 0) > 0
     n_categories = role_counts.get("category", 0)
 
     # Survey data: many ordinal/categorical columns, possibly Likert-scale questions

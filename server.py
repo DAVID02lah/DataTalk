@@ -37,7 +37,7 @@ from src.services import auth_service
 from src.services import chat_session_service
 from src.services import usage_service
 from src.services.auth_service import require_auth
-from src.core.errors import DataTalkError, DatasetNotFoundError, ValidationError, LimitExceededError
+from src.core.errors import DataTalkError, ValidationError, LimitExceededError
 from src.services.analysis_pipeline import run_analysis_pipeline
 from src.services.dashboard_store import (
     get_session_dashboard,
@@ -156,12 +156,6 @@ def _get_user_state():
         )
     chat_session_service.enforce_session_limit(state, app_config.MAX_CHAT_SESSIONS)
     return state
-
-
-
-def _is_empty_row(values) -> bool:
-    """Return True if every cell in a row is None or whitespace-only."""
-    return all(cell is None or str(cell).strip() == "" for cell in values)
 
 
 def _get_dataframe(filename, user_id, state):
@@ -638,7 +632,7 @@ def save_full_data(filename):
 
     # Handsontable appends trailing empty rows during edits; strip them to
     # prevent unintentional row count inflation on save.
-    while rows and _is_empty_row(rows[-1]):
+    while rows and all(cell is None or str(cell).strip() == "" for cell in rows[-1]):
         rows.pop()
 
     df = pd.DataFrame(rows, columns=headers)

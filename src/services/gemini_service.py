@@ -9,8 +9,8 @@ structured responses that include natural language + Plotly chart JSON.
 import os
 import json
 import logging
-import re
 from google import genai
+from google.genai import types
 from src.core.errors import LLMServiceError
 
 logger = logging.getLogger("data_talk.gemini")
@@ -21,6 +21,9 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 # Model to use (override via GEMINI_MODEL_ID env var)
 # Default to the correct model name; override via GEMINI_MODEL_ID in .env if needed.
 MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.1-flash-lite-preview")
+
+# Ask Gemini for JSON at the API layer so the parser only has to handle one contract.
+JSON_RESPONSE_CONFIG = types.GenerateContentConfig(response_mime_type="application/json")
 
 
 def _extract_usage_dict(response):
@@ -163,6 +166,7 @@ def analyse_data(question, data_context, chat_history=None):
         response = client.models.generate_content(
             model=MODEL_ID,
             contents=full_prompt,
+            config=JSON_RESPONSE_CONFIG,
         )
         response_text = str(getattr(response, "text", "") or "")
         usage_dict = _extract_usage_dict(response)
@@ -367,49 +371,43 @@ Return ONLY the explanation text, no JSON, no code fences."""
 
 def _parse_response(response_text):
     """
-    Parse Gemini's response into structured text + chart JSON.
-    Handles cases where Gemini wraps JSON in code fences or returns plain text.
+    Parse Gemini's JSON response into structured text + chart JSON.
+    The API now asks Gemini for JSON directly, so this parser only normalises
+    the expected object and keeps a plain-text fallback for rare contract breaks.
     """
-    text = response_text.strip()
-
-    # Remove markdown code fences if present (```json ... ``` or ``` ... ```)
-    text = re.sub(r'^```(?:json)?\s*\n?', '', text)
-    text = re.sub(r'\n?```\s*$', '', text)
-    text = text.strip()
-
     try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict) and "text" in parsed:
-            return {
-                "text": parsed.get("text", ""),
-                "chart": parsed.get("chart", None),
-                "table": parsed.get("table", None),
-                "stats": parsed.get("stats", None),
-                "followup": parsed.get("followup", [])
-            }
+        parsed = json.loads(str(response_text or "").strip())
     except json.JSONDecodeError:
-        pass
+        return _fallback_structured_response(str(response_text or "").strip())
 
-    # If JSON parsing failed, try to extract JSON from the text
-    json_match = re.search(r'\{[\s\S]*"text"\s*:[\s\S]*\}', text)
-    if json_match:
-        try:
-            parsed = json.loads(json_match.group())
-            return {
-                "text": parsed.get("text", ""),
-                "chart": parsed.get("chart", None),
-                "table": parsed.get("table", None),
-                "stats": parsed.get("stats", None),
-                "followup": parsed.get("followup", [])
-            }
-        except json.JSONDecodeError:
-            pass
+    if not isinstance(parsed, dict):
+        return _fallback_structured_response(str(response_text or "").strip())
 
-    # Fallback: treat entire response as plain text
+    return _normalise_structured_response(parsed)
+
+
+def _normalise_structured_response(payload):
+    """Keep the API response shape stable even if Gemini omits optional fields."""
+    chart = payload.get("chart")
+    table = payload.get("table")
+    stats = payload.get("stats")
+    followup = payload.get("followup")
+
     return {
-        "text": response_text.strip(),
+        "text": str(payload.get("text", "") or ""),
+        "chart": chart if isinstance(chart, dict) else None,
+        "table": table if isinstance(table, dict) else None,
+        "stats": stats if isinstance(stats, list) else None,
+        "followup": followup if isinstance(followup, list) else [],
+    }
+
+
+def _fallback_structured_response(text):
+    """Preserve the user-visible answer when the model misses the JSON contract."""
+    return {
+        "text": text,
         "chart": None,
         "table": None,
         "stats": None,
-        "followup": []
+        "followup": [],
     }

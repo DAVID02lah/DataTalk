@@ -11,7 +11,7 @@ import json
 import logging
 import threading
 import time
-from flask import request, jsonify, g
+from flask import request, g
 from supabase import create_client, Client
 from src.core import app_config
 from src.core.errors import AuthenticationError, ValidationError
@@ -279,9 +279,9 @@ def update_profile(user_id: str, display_name: str) -> dict:
 def logout(access_token: str) -> bool:
     """Sign out the user (invalidates the refresh token server-side)."""
     try:
-        # Create fresh client to not mutate shared global client headers concurrently
-        sb = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-        sb.auth._headers.update({"Authorization": f"Bearer {access_token}"})
+        sb = get_supabase_service()
+        sb.auth.admin.sign_out(access_token)
+        return True
     except Exception as e:
         logger.error("Logout error: %s", e)
         return False
