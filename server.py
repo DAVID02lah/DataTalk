@@ -1097,6 +1097,8 @@ def remove_chart(chart_id):
         return jsonify({"error": str(e)}), 500
 
 
+from src.core.value_utils import to_native
+
 @app.route("/api/dashboard/card-data", methods=["POST"])
 @require_auth
 def card_data():
@@ -1109,6 +1111,11 @@ def card_data():
     aggregation = data.get("aggregation", "count")
 
     state = _get_user_state()
+    # Resolve the intended session (allowing it to come from payload)
+    session_id = chat_session_service.resolve_requested_session_id(state, request_data=data)
+    if session_id:
+        chat_session_service.set_active_session(state, session_id)
+        
     filename = state.active_file.get("filename")
     if not filename:
         return jsonify({"error": "No active file"}), 400
@@ -1139,7 +1146,8 @@ def card_data():
         else:
             value = int(col.nunique())
 
-        return jsonify({"success": True, "value": value})
+        safe_value = to_native(value)
+        return jsonify({"success": True, "value": safe_value})
     except Exception as e:
         logger.error("Card data computation failed: %s", e)
         return jsonify({"error": str(e)}), 500
