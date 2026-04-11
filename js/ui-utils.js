@@ -81,7 +81,46 @@
         });
     }
 
+    // --- Shared API fetch helpers (used by data-chat and dashboard-ui) ---
+
+    function createUserFacingError(message) {
+        const err = new Error(message || "An unexpected error occurred.");
+        err.userFacing = true;
+        return err;
+    }
+
+    async function fetchApiJson(url, options = {}) {
+        const response = await fetch(url, options);
+        let data;
+        try {
+            data = await response.json();
+        } catch (e) {
+            data = {};
+            if (!response.ok) {
+                // If it fails to parse JSON and the status is an error, try to capture the text or status.
+                data.error = `HTTP ${response.status} ${response.statusText}`;
+            }
+        }
+        return { response, data };
+    }
+
+    function assertApiSuccess(response, data, fallbackMessage, options = {}) {
+        const { requireSuccessFlag = false } = options;
+        const failed = !response.ok || data.error || (requireSuccessFlag && data.success === false);
+        if (failed) {
+            throw createUserFacingError(data.text || data.error || fallbackMessage);
+        }
+    }
+
     window.UIUtils = {
         confirm: confirmDialog,
+        createUserFacingError,
+        fetchApiJson,
+        assertApiSuccess,
     };
+
+    // Expose as bare globals — called unqualified throughout the codebase.
+    window.createUserFacingError = createUserFacingError;
+    window.fetchApiJson = fetchApiJson;
+    window.assertApiSuccess = assertApiSuccess;
 })(window);

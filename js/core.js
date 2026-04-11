@@ -25,6 +25,7 @@ const App = {
         chatSessions: [],           // Conversation session summaries
         activeSessionId: null,      // Active conversation session id
         maxChatSessions: 2,         // Backend-configured conversation cap
+        user: null,                 // Authenticated user profile from /api/auth/session
     },
 
     /** Return common headers for authenticated API requests. */
@@ -81,8 +82,11 @@ const App = {
         });
     },
 
-    /** Update the UI with the authenticated user's profile info. */
+    /** Update the UI and state with the authenticated user's profile info. */
     loadUserProfile(user) {
+        if (user && typeof user === "object") {
+            App.state.user = user;
+        }
         const nameEl = document.querySelector('.user-profile .user-name');
         const initialsEl = document.querySelector('.user-profile .user-avatar');
         if (window.AuthClient && user && typeof user === "object") {

@@ -90,31 +90,51 @@ Then navigate to `http://localhost:5000` in your web browser.
 ## 📂 Project Structure
 
 ```
-├── server.py              # Flask routing, REST API endpoints, multi-phase orchestration
-├── gemini_service.py      # LLM prompts, code generation, interpretation, data extraction
-├── data_service.py        # Data loading, schema generation, profiling, statistics
-├── code_executor.py       # Sandboxed subprocess execution with AST validation
-├── app_state.py           # In-memory query cache (LRU) and file computation cache
-├── app_config.py          # Environment variable parsing
-├── pagination.py          # Shared pagination helper for history/list endpoints
-├── value_utils.py         # Native pandas/numpy scalar conversion helpers
-├── auth_service.py        # Supabase Auth integration, JWT verification, route protection
-├── dashboard.html         # Main SPA: sidebar, chat pane, data grid, dashboard
-├── index.html             # Landing page
-├── login.html             # Login page with Supabase authentication integration
+├── server.py                  # Flask entry-point — static files, route registration
+├── src/
+│   ├── core/
+│   │   ├── app_config.py      # Environment variable parsing
+│   │   ├── app_state.py       # In-memory query cache (LRU) and file computation cache
+│   │   ├── errors.py          # Shared error classes
+│   │   ├── pagination.py      # Shared pagination helper
+│   │   └── value_utils.py     # Native pandas/numpy scalar conversion helpers
+│   └── services/
+│       ├── analysis_pipeline.py    # Multi-phase chat analysis orchestration
+│       ├── auth_service.py         # Supabase Auth, JWT verification, route protection
+│       ├── chat_session_service.py # Multi-session conversation persistence
+│       ├── code_executor.py        # Sandboxed subprocess execution with AST validation
+│       ├── dashboard_store.py      # Dashboard state read/write
+│       ├── data_service.py         # Data loading, schema generation, profiling
+│       ├── gemini_service.py       # LLM prompts, code generation, interpretation
+│       └── usage_service.py        # Rate-limit tracking and token metering
+├── public/
+│   ├── dashboard.html         # Main SPA: sidebar, chat pane, data grid, dashboard
+│   ├── index.html             # Landing page
+│   └── login.html             # Login page with Supabase authentication
 ├── js/
-│   ├── core.js            # Global app state, particle animations, view switching
-│   ├── data-chat.js       # File upload, chat messaging, Plotly chart rendering
-│   ├── dashboard-ui.js    # Dashboard grid, drag-and-drop, chart pinning
-│   └── constants.js       # Configuration constants (chart heights, timeouts)
+│   ├── constants.js           # Configuration constants (chart heights, timeouts)
+│   ├── auth-client.js         # Browser auth helper (cookie-based sessions)
+│   ├── ui-utils.js            # Shared UI helpers (confirm dialog, API fetch, assert)
+│   ├── core.js                # Global App state, particles, view switching
+│   ├── chat-render.js         # Chat message DOM, Plotly charts, tables, typing indicator
+│   ├── chat.js                # SSE streaming, message send/receive, history
+│   ├── sessions.js            # Conversation session CRUD, modal, list rendering
+│   ├── upload.js              # File upload, grid init, dataset loading/saving
+│   ├── usage.js               # Usage tracking sidebar, auto-refresh timer
+│   ├── data-chat.js           # Glue: path helpers, error display, sidebar init
+│   ├── dashboard-ui.js        # Glue: pin chart, smart questions, data preview, fullscreen
+│   ├── dashboard-grid.js      # GridStack init, layout persistence, resize sweep
+│   ├── dashboard-widgets.js   # Chart/KPI card widget rendering, remove/clear
+│   ├── dashboard-customizer.js # Live Plotly chart customization panel
+│   └── dashboard-cards.js     # KPI card modal, column loading, submit
 ├── css/
-│   ├── styles.css         # Landing page styles (global typography, colors, buttons)
+│   ├── styles.css             # Landing page styles (global typography, colors, buttons)
 │   ├── dashboard-layout.css   # Sidebar, navigation, main container, dashboard grid
 │   ├── dashboard-chat.css     # Chat pane, overlays, message bubbles, input styling
 │   └── data-dashboard.css     # GridStack dashboard, chart containers
-├── assets/                # Custom illustrated PNG characters (7 files)
-├── requirements.txt       # Python dependencies (pinned versions)
-└── start.bat              # Windows auto-launcher
+├── assets/                    # Custom illustrated PNG characters (7 files)
+├── requirements.txt           # Python dependencies (pinned versions)
+└── start.bat                  # Windows auto-launcher
 ```
 
 ---
