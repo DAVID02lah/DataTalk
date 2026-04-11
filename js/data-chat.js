@@ -1215,6 +1215,83 @@ function applyChatStreamEvent(eventName, payload, streamState) {
     }
 }
 
+function normalizeSSEChunk(chunkText) {
+    return String(chunkText || "").replace(/\r\n/g, "\n");
+}
+
+function parseSSEFrame(frameText) {
+    const lines = frameText.split("\n");
+    let eventName = "";
+    const dataLines = [];
+
+    for (const rawLine of lines) {
+        if (!rawLine || rawLine.startsWith(":")) {
+            continue;
+        }
+
+        const separatorIndex = rawLine.indexOf(":");
+        const fieldName = separatorIndex >= 0 ? rawLine.slice(0, separatorIndex) : rawLine;
+        let fieldValue = separatorIndex >= 0 ? rawLine.slice(separatorIndex + 1) : "";
+        if (fieldValue.startsWith(" ")) {
+            fieldValue = fieldValue.slice(1);
+        }
+
+        if (fieldName === "event") {
+            eventName = fieldValue.trim();
+            continue;
+        }
+
+        if (fieldName === "data") {
+            dataLines.push(fieldValue);
+        }
+    }
+
+    if (!eventName || dataLines.length === 0) {
+        return null;
+    }
+
+    return {
+        eventName,
+        dataText: dataLines.join("\n"),
+        dataLines,
+    };
+}
+
+function parseSSEJsonPayload(frame) {
+    try {
+        return JSON.parse(frame.dataText);
+    } catch (primaryError) {
+        // Some backends may split string values across multiple SSE data lines.
+        if (frame.dataLines.length <= 1) {
+            throw primaryError;
+        }
+
+        try {
+            return JSON.parse(frame.dataLines.join("\\n"));
+        } catch {
+            throw primaryError;
+        }
+    }
+}
+
+function consumeSSEFrames(bufferText, onFrame) {
+    let buffer = bufferText;
+    let boundaryIndex = buffer.indexOf("\n\n");
+
+    while (boundaryIndex !== -1) {
+        const frameText = buffer.slice(0, boundaryIndex);
+        buffer = buffer.slice(boundaryIndex + 2);
+
+        if (frameText.trim()) {
+            onFrame(frameText);
+        }
+
+        boundaryIndex = buffer.indexOf("\n\n");
+    }
+
+    return buffer;
+}
+
 async function readChatStreamResult(response) {
     const reader = response.body?.getReader();
     if (!reader) {
@@ -1224,38 +1301,37 @@ async function readChatStreamResult(response) {
     const decoder = new TextDecoder();
     const streamState = { finalResult: null };
     let buffer = "";
-    let currentEvent = "";
+
+    const handleFrame = (frameText) => {
+        const frame = parseSSEFrame(frameText);
+        if (!frame) {
+            return;
+        }
+
+        let payload;
+        try {
+            payload = parseSSEJsonPayload(frame);
+        } catch (error) {
+            console.warn("SSE parse error:", error);
+            return;
+        }
+
+        applyChatStreamEvent(frame.eventName, payload, streamState);
+    };
 
     while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+        buffer += normalizeSSEChunk(decoder.decode(value, { stream: true }));
+        buffer = consumeSSEFrames(buffer, handleFrame);
+    }
 
-        for (const line of lines) {
-            if (line.startsWith("event: ")) {
-                currentEvent = line.slice(7).trim();
-                continue;
-            }
+    buffer += normalizeSSEChunk(decoder.decode());
+    buffer = consumeSSEFrames(buffer, handleFrame);
 
-            if (!line.startsWith("data: ") || !currentEvent) {
-                continue;
-            }
-
-            let payload;
-            try {
-                payload = JSON.parse(line.slice(6));
-            } catch (e) {
-                console.warn("SSE parse error:", e);
-                currentEvent = "";
-                continue;
-            }
-
-            applyChatStreamEvent(currentEvent, payload, streamState);
-            currentEvent = "";
-        }
+    if (buffer.trim()) {
+        handleFrame(buffer);
     }
 
     return streamState.finalResult;
@@ -1777,19 +1853,70 @@ function appendErrorMessage(text) {
 // chat container instead of one ResizeObserver per chart.
 // (Plotly's responsive:false disables the per-chart observers.)
 // ============================================================
+function resizeChatPlotlyCharts(chatContainer) {
+    chatContainer.querySelectorAll('[id^="chat-chart-"]').forEach((chartEl) => {
+        if (chartEl._fullLayout) {
+            Plotly.Plots.resize(chartEl);
+        }
+    });
+}
+
+function createChatPlotlyResizeScheduler(chatContainer) {
+    const state = {
+        rafId: 0,
+        width: 0,
+        height: 0,
+    };
+
+    const scheduleResize = () => {
+        const rect = chatContainer.getBoundingClientRect();
+        const nextWidth = Math.round(rect.width);
+        const nextHeight = Math.round(rect.height);
+        const sizeChanged = nextWidth !== state.width || nextHeight !== state.height;
+
+        if (!sizeChanged && state.rafId === 0) {
+            return;
+        }
+
+        state.width = nextWidth;
+        state.height = nextHeight;
+
+        if (state.rafId !== 0) {
+            return;
+        }
+
+        state.rafId = requestAnimationFrame(() => {
+            state.rafId = 0;
+            resizeChatPlotlyCharts(chatContainer);
+        });
+    };
+
+    scheduleResize.cancel = () => {
+        if (state.rafId !== 0) {
+            cancelAnimationFrame(state.rafId);
+            state.rafId = 0;
+        }
+    };
+
+    return scheduleResize;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     const chatContainer = document.getElementById("chat-messages");
-    if (!chatContainer || typeof ResizeObserver === "undefined") return;
+    if (!chatContainer || typeof ResizeObserver === "undefined" || typeof Plotly === "undefined") return;
 
-    let _resizeTimer;
-    new ResizeObserver(() => {
-        clearTimeout(_resizeTimer);
-        _resizeTimer = setTimeout(() => {
-            chatContainer.querySelectorAll('[id^="chat-chart-"]').forEach(el => {
-                if (el._fullLayout) Plotly.Plots.resize(el);
-            });
-        }, 150);
-    }).observe(chatContainer);
+    const scheduleResize = createChatPlotlyResizeScheduler(chatContainer);
+    const resizeObserver = new ResizeObserver(() => {
+        scheduleResize();
+    });
+
+    resizeObserver.observe(chatContainer);
+    scheduleResize();
+
+    window.addEventListener("beforeunload", () => {
+        resizeObserver.disconnect();
+        scheduleResize.cancel();
+    }, { once: true });
 });
 
 window.addEventListener("beforeunload", () => {
