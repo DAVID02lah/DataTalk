@@ -309,6 +309,19 @@ def _format_schema_value(value, float_fmt=False):
     return f"{native_value:.2f}" if float_fmt else str(native_value)
 
 
+def _sample_non_null_values(series, limit=20):
+    """
+    Collect up to `limit` non-null values without materializing a full dropna copy.
+    """
+    sample = []
+    for value in series.values:
+        if pd.notna(value):
+            sample.append(value)
+            if len(sample) >= limit:
+                break
+    return sample
+
+
 def get_schema_string(df, max_tokens=15000):
     """
     Create a rich context description of the DataFrame for LLM code generation.
@@ -418,9 +431,10 @@ def get_data_profile(df):
 
     # Try to detect datetime columns that are stored as strings
     for col in cat_cols[:]:
-        if df[col].dropna().empty:
+        sample_values = _sample_non_null_values(df[col], limit=20)
+        if not sample_values:
             continue
-        sample = df[col].dropna().head(20)
+        sample = pd.Series(sample_values, dtype="object")
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
