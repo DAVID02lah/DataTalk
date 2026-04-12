@@ -190,6 +190,7 @@ def _build_chat_session_payload(state):
         "sessions": chat_session_service.list_session_summaries(state),
         "history": list(reversed(history_window)),
         "max_chat_sessions": app_config.MAX_CHAT_SESSIONS,
+        "max_upload_mb": app_config.MAX_UPLOAD_MB,
     }
 
 
@@ -958,19 +959,20 @@ def clear_chat():
     state.clear_file_cache()
     state.dashboard_store_cache = None
     state.dashboard_store_cached_at = None
-    sb_service = None
     try:
         sb_service = auth_service.get_supabase_service()
-        sb_service.table("chat_sessions").delete().eq("user_id", g.user_id).execute()
     except Exception as e:
-        logger.error("Chat history clear failed from Supabase: %s", e)
-
-    # Keep dashboard visuals aligned with clear-chat behavior.
-    if sb_service is not None:
-        try:
-            sb_service.table("dashboard_configs").delete().eq("user_id", g.user_id).execute()
-        except Exception as e:
-            logger.error("Dashboard clear failed from Supabase during chat clear: %s", e)
+        logger.error("Supabase client init failed during chat clear: %s", e)
+    else:
+        # Keep dashboard visuals aligned with clear-chat behavior.
+        for table_name, error_message in (
+            ("chat_sessions", "Chat history clear failed from Supabase: %s"),
+            ("dashboard_configs", "Dashboard clear failed from Supabase during chat clear: %s"),
+        ):
+            try:
+                sb_service.table(table_name).delete().eq("user_id", g.user_id).execute()
+            except Exception as e:
+                logger.error(error_message, e)
 
     return jsonify({"success": True})
 
