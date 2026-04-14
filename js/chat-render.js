@@ -12,7 +12,6 @@ function renderChartHtml(chartJson) {
                 <button class="chart-action-btn" onclick="pinChart('${chartId}', '${escapeAttr(typeof chartTitle === 'string' ? chartTitle : 'Chart')}')">📌 Pin to Dashboard</button>
                 <button class="chart-action-btn" onclick="downloadChart('${chartId}')">📥 Download PNG</button>
                 <button class="chart-action-btn expand-btn" onclick="openFullscreenChart('${chartId}')">🔍 Expand</button>
-                <button class="chart-action-btn" onclick="enableAnnotation('${chartId}')">📝 Annotate</button>
             </div>
         </div>
     `;
@@ -92,7 +91,7 @@ function mountPlotlyChart(chartId, chartJson, options = {}) {
 
             const plotConfig = {
                 responsive: false,
-                displayModeBar: true,
+                displayModeBar: false,
                 modeBarButtonsToRemove: ["lasso2d", "select2d"],
                 ...plotConfigOverrides,
             };
@@ -255,62 +254,6 @@ function appendErrorMessage(text) {
     container.scrollTop = container.scrollHeight;
 }
 
-// --- Chart annotation ---
-
-function enableAnnotation(chartId) {
-    const chartEl = document.getElementById(chartId);
-    if (!chartEl) return;
-
-    chartEl.on("plotly_click", function (eventData) {
-        if (!eventData || !eventData.points || eventData.points.length === 0) return;
-        const point = eventData.points[0];
-        const container = chartEl.closest(".chat-chart-container");
-        if (!container) return;
-
-        const existing = container.querySelector(".annotation-input-overlay");
-        if (existing) existing.remove();
-
-        const overlay = document.createElement("div");
-        overlay.className = "annotation-input-overlay";
-        overlay.style.left = "50%";
-        overlay.style.top = "10px";
-        overlay.style.transform = "translateX(-50%)";
-        overlay.innerHTML = `
-            <input type="text" placeholder="Add annotation..." autofocus />
-            <button onclick="addAnnotation('${chartId}', '${point.x}', ${point.y}, this)">Add</button>
-        `;
-        container.appendChild(overlay);
-
-        const inp = overlay.querySelector("input");
-        inp.focus();
-        inp.addEventListener("keydown", function (e) {
-            if (e.key === "Enter") addAnnotation(chartId, point.x, point.y, overlay.querySelector("button"));
-            else if (e.key === "Escape") overlay.remove();
-        });
-    });
-}
-
-function addAnnotation(chartId, x, y, btnEl) {
-    const overlay = btnEl.closest(".annotation-input-overlay");
-    const inp = overlay.querySelector("input");
-    const text = inp.value.trim();
-    if (!text) return;
-
-    const chartEl = document.getElementById(chartId);
-    const existingAnnotations = (chartEl.layout && chartEl.layout.annotations) || [];
-
-    Plotly.relayout(chartId, {
-        annotations: [...existingAnnotations, {
-            x: x, y: y, text: text,
-            showarrow: true, arrowhead: 2, arrowsize: 1,
-            arrowcolor: "#4285f4",
-            font: { size: 12, color: "#4285f4", family: "Inter, sans-serif" },
-            bgcolor: "rgba(255,255,255,0.9)",
-            bordercolor: "#4285f4", borderwidth: 1, borderpad: 4,
-        }]
-    });
-    overlay.remove();
-}
 
 // --- Shared Plotly resize observer for chat container ---
 

@@ -13,9 +13,10 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
 
     const contentHtml = `
         <div class="widget-header" data-widget-id="${widgetId}">
-            <span class="widget-title">${escapeHtml(title)}</span>
+            <input class="widget-title" value="${escapeHtml(title)}" placeholder="Widget Title" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
             <div class="widget-actions">
-                <button class="widget-btn" onclick="openChartCustomizer('${chartId}')" title="Customize">⚙️</button>
+                <button class="widget-btn" onclick="toggleWidgetCollapse('${widgetId}')" title="Hold to Drag / Click to Collapse">↕</button>
+                <button class="widget-btn" onclick="openChartCustomizer('${chartId}')" title="Customise">⚙️</button>
                 <button class="widget-btn" onclick="openFullscreenChart('${plotId}')" title="Fullscreen">🔍</button>
                 <button class="widget-btn" onclick="downloadDashChart('${plotId}')" title="Download PNG">📥</button>
                 <button class="widget-btn widget-btn-danger" onclick="removeDashChart('${chartId}')" title="Remove">×</button>
@@ -94,8 +95,9 @@ function addDashboardCardWidget(cardData, widgetId, layoutOverrides) {
 
     const contentHtml = `
         <div class="widget-header" data-widget-id="${widgetId}">
-            <span class="widget-title">${escapeHtml(title)}</span>
+            <input class="widget-title" value="${escapeHtml(title)}" placeholder="Card Title" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
             <div class="widget-actions">
+                <button class="widget-btn" onclick="toggleWidgetCollapse('${widgetId}')" title="Hold to Drag / Click to Collapse">↕</button>
                 <button class="widget-btn widget-btn-danger" onclick="removeDashCard('${cardId}')" title="Remove">×</button>
             </div>
         </div>
@@ -207,4 +209,37 @@ function clearDashboard() {
     if (emptyEl) emptyEl.classList.remove("hidden");
     const countBadge = document.getElementById("dashboard-chart-count");
     if (countBadge) countBadge.textContent = "0 widgets";
+}
+
+// --- Widget Mechanics ---
+
+async function updateWidgetTitle(widgetId, newTitle) {
+    if (widgetId.startsWith('widget-dash-')) {
+        const id = widgetId.replace('widget-dash-', '');
+        const chart = (App.state.dashboardCharts || []).find(c => c.id === id);
+        if (chart) {
+            chart.title = newTitle;
+            await saveDashboardToBackend();
+        }
+    } else if (widgetId.startsWith('widget-card-')) {
+        const id = widgetId.replace('widget-card-', '');
+        const card = (App.state.dashboardCards || []).find(c => c.id === id);
+        if (card) {
+            card.title = newTitle;
+            await saveDashboardToBackend();
+        }
+    }
+}
+
+function toggleWidgetCollapse(widgetId) {
+    const header = document.querySelector(`.widget-header[data-widget-id="${widgetId}"]`);
+    if (header) {
+        header.classList.toggle('retracted');
+        
+        // Trigger a fake resize event slightly after to ensure Plotly recalculates properly 
+        // since the container just expanded
+        setTimeout(() => {
+            window.dispatchEvent(new Event('resize'));
+        }, 150);
+    }
 }

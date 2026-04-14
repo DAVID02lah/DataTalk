@@ -17,7 +17,7 @@ from src.services import gemini_service
 from src.core.errors import CodeExecutionError, DataTalkError, LLMServiceError
 
 
-def _build_cache_key(filename: str, message: str) -> str:
+def _build_cache_key(filename: str | None, message: str) -> str:
     return f"{filename}:{message}"
 
 
@@ -31,7 +31,7 @@ def _copy_cached_result(cached_result: Any) -> dict[str, Any] | None:
     return copied
 
 
-def _ensure_session_history(state, filename: str) -> list[dict[str, Any]]:
+def _ensure_session_history(state, filename: str | None) -> list[dict[str, Any]]:
     """Keep chat history bound to the active session to avoid cross-session bleed."""
     active_session = chat_session_service.ensure_active_session(state, filename=filename)
     history = active_session.get("messages")
@@ -42,7 +42,7 @@ def _ensure_session_history(state, filename: str) -> list[dict[str, Any]]:
     return history
 
 
-def _get_or_cache(state, filename: str, cache_key: str, producer):
+def _get_or_cache(state, filename: str | None, cache_key: str, producer):
     value = state.get_cached(filename, cache_key)
     if value is None:
         value = producer()
@@ -50,7 +50,7 @@ def _get_or_cache(state, filename: str, cache_key: str, producer):
     return value
 
 
-def _build_lean_context(df, state, filename: str, log_event) -> tuple[str, str]:
+def _build_lean_context(df, state, filename: str | None, log_event) -> tuple[str, str]:
     schema_context_lean = _get_or_cache(
         state,
         filename,
@@ -70,7 +70,7 @@ def _build_lean_context(df, state, filename: str, log_event) -> tuple[str, str]:
     return schema_context_lean, profile_context
 
 
-def _build_full_schema_context(df, state, filename: str) -> str:
+def _build_full_schema_context(df, state, filename: str | None) -> str:
     return _get_or_cache(
         state,
         filename,
@@ -202,7 +202,7 @@ def _run_generated_code_analysis(
 def run_analysis_pipeline(
     *,
     message: str,
-    filename: str,
+    filename: str | None,
     user_id: str,
     state,
     skip_cache: bool,
@@ -221,11 +221,27 @@ def run_analysis_pipeline(
                 yield ("result", cached)
                 return
 
-        yield ("phase", {"phase": "loading", "message": "Loading dataset..."})
-        df = get_dataframe(filename, user_id=user_id, state=state)
-
         history = _ensure_session_history(state, filename)
         history_capped = history[-app_config.CHAT_HISTORY_CAP:] if history else []
+
+        if gemini_service.is_conversational_query(message):
+            log_event("conversational_query_detected")
+            yield ("phase", {"phase": "thinking", "message": "Thinking..."})
+            result = gemini_service.conversational_response(message, history_capped)
+            record_usage(state, result.get("usage"), "Conversational")
+            result["mode"] = "conversational"
+            result["cached"] = False
+            
+            state.query_cache.set(cache_key, result)
+            
+            chat_session_service.append_exchange(state, message, result)
+            save_chat_history(user_id=user_id, state=state)
+            
+            yield ("result", result)
+            return
+
+        yield ("phase", {"phase": "loading", "message": "Loading dataset..."})
+        df = get_dataframe(filename, user_id=user_id, state=state)
 
         schema_context_lean, profile_context = _build_lean_context(df, state, filename, log_event)
 

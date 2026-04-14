@@ -7,6 +7,7 @@ structured responses that include natural language + Plotly chart JSON.
 """
 
 import os
+import re
 import json
 import logging
 from google import genai
@@ -40,11 +41,12 @@ SYSTEM_PROMPT = """You are DATA TALK AI — an expert data analyst assistant.
 You help users analyse their datasets by perform data processing and answering questions clearly and generating interactive charts.
 
 Core Guidelines:
-1. Always be helpful, concise, and professional.
-2. If the question would benefit from a chart/visualisation, generate a Plotly chart specification.
-3. If the question involves specific data values, comparisons, or breakdowns, also return a summary table.
-4. If a chart is generated, also provide 2-4 key statistical highlights.
-5. ALWAYS format your response as valid JSON with this exact structure:
+1. Always be helpful, concise, professional, and use British English spelling (e.g., 'analyse', 'colour').
+2. If the user's message is conversational (e.g. greetings, questions about your identity), respond conversationally WITHOUT data analysis and set chart, table, stats to null.
+3. If the question would benefit from a chart/visualisation, generate a Plotly chart specification.
+4. If the question involves specific data values, comparisons, or breakdowns, also return a summary table.
+5. If a chart is generated, also provide 2-4 key statistical highlights.
+6. ALWAYS format your response as valid JSON with this exact structure:
 {
   "text": "Your natural language answer here. Use markdown formatting for readability.",
   "chart": null or { plotly chart object },
@@ -175,6 +177,88 @@ def analyse_data(question, data_context, chat_history=None):
         return result
     except Exception as e:
         raise LLMServiceError(f"Sorry, I encountered an error while analysing your data: {str(e)}")
+
+
+# Precompiled patterns — evaluated once at import time, not per call.
+_GREETING_PATTERNS = re.compile(
+    r"^(hi|hello|hey|greetings|good\s*morning|good\s*afternoon|good\s*evening|yo|sup)\b"
+)
+_FAREWELL_PATTERNS = re.compile(
+    r"^(bye|goodbye|see you|take care|thanks|thank you)\b"
+)
+# Identity / capability probes can appear mid-sentence ("can you tell me what are you?").
+_IDENTITY_PATTERNS = re.compile(
+    r"(who are you|what are you|what is (your name|datatalk|data talk)"
+    r"|what can you do|what do you do|are you (an? )?(ai|bot|assistant)|help me)\b"
+)
+
+
+def is_conversational_query(question: str) -> bool:
+    """
+    Fast regex intent classifier — prevents wasting LLM tokens on greetings
+    or identity questions that don't need dataset context.
+    """
+    cleaned = question.lower().strip()
+
+    if _IDENTITY_PATTERNS.search(cleaned):
+        return True
+
+    # Greetings / farewells are only reliable when the message is short;
+    # a long message starting with "hi" is likely a real question.
+    if len(cleaned.split()) <= 6:
+        if _GREETING_PATTERNS.search(cleaned) or _FAREWELL_PATTERNS.search(cleaned):
+            return True
+
+    return False
+
+
+def conversational_response(question: str, chat_history=None) -> dict:
+    """
+    Dedicated lightweight LLM path for conversational queries.
+    Bypasses data context entirely to save tokens and prevent hallucinated analysis.
+    """
+    conversational_prompt = (
+        "You are DATA TALK AI — a helpful, professional, and friendly data analyst assistant.\n"
+        "If the user greets you or asks who you are, introduce yourself and briefly mention "
+        "that you can analyse datasets, generate charts, and summarise data.\n"
+        "DO NOT invent or reference any specific dataset. Keep your response conversational.\n"
+        "Always use British English spelling (e.g., 'analyse', 'colour').\n\n"
+        "ALWAYS format your response as valid JSON with this exact structure:\n"
+        "{\n"
+        '  "text": "Your natural language conversational response.",\n'
+        '  "chart": null,\n'
+        '  "table": null,\n'
+        '  "stats": null,\n'
+        '  "followup": ["What kind of data can you analyse?", "How do I upload a dataset?"]\n'
+        "}\n"
+        "IMPORTANT: Return ONLY the JSON object. No markdown code fences."
+    )
+    
+    prompt_parts = [conversational_prompt]
+    
+    if chat_history:
+        prompt_parts.append("\n\nPrevious conversation:")
+        for msg in chat_history[-6:]:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            prompt_parts.append(f"{role}: {msg['text']}")
+            
+    prompt_parts.append(f"\n\nUser: {question}")
+    full_prompt = "\n".join(prompt_parts)
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=full_prompt,
+            config=JSON_RESPONSE_CONFIG,
+        )
+        response_text = str(getattr(response, "text", "") or "")
+        usage_dict = _extract_usage_dict(response)
+        result = _parse_response(response_text)
+        result["usage"] = usage_dict
+        return result
+    except Exception as e:
+        logger.error("Conversational LLM Error: %s", e)
+        raise LLMServiceError(f"Sorry, I encountered an error while chatting: {e}")
 
 
 # ==============================================================
