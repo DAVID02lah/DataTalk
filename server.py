@@ -658,7 +658,6 @@ def save_full_data(filename):
 
 @app.route("/api/suggest-questions", methods=["GET"])
 @require_auth
-@limiter.limit(app_config.RATE_LIMIT)
 def suggest_questions():
     """Ask Gemini to suggest 4 smart questions based on the active dataset."""
     state = _get_user_state()

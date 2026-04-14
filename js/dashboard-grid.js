@@ -68,8 +68,8 @@ function initDashboardGridStack() {
             removable: false,
             maxRow: 12,
             draggable: {
-                handle: '.widget-header',
-                cancel: '.widget-btn, .widget-btn *, .ui-resizable-handle',
+                handle: '.grid-stack-item-content',
+                cancel: '.widget-btn, .widget-btn *, input, select, button, a, .ui-resizable-handle',
                 scroll: false,
             },
             resizable: {

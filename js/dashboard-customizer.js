@@ -44,7 +44,7 @@ function openChartCustomizer(chartId) {
             return `
                 <div class="color-picker-row">
                     <input type="color" value="${color}" data-trace-index="${i}">
-                    <span>${escapeHtml(name)}</span>
+                    <input type="text" class="trace-name-input" value="${escapeHtml(name)}" data-trace-index="${i}" placeholder="Trace name">
                 </div>
             `;
         }).join('');
@@ -53,6 +53,12 @@ function openChartCustomizer(chartId) {
             const traceIndex = Number(inputEl.dataset.traceIndex || "0");
             inputEl.addEventListener("input", () => applyTraceColor(traceIndex, inputEl.value));
             inputEl.addEventListener("change", () => applyTraceColor(traceIndex, inputEl.value));
+        });
+
+        colorDiv.querySelectorAll('input.trace-name-input').forEach((inputEl) => {
+            const traceIndex = Number(inputEl.dataset.traceIndex || "0");
+            inputEl.addEventListener("input", () => applyTraceName(traceIndex, inputEl.value));
+            inputEl.addEventListener("change", () => applyTraceName(traceIndex, inputEl.value));
         });
     }
 }
@@ -117,6 +123,22 @@ function applyTraceColor(traceIndex, color) {
     }
 }
 
+function applyTraceName(traceIndex, newName) {
+    if (!activeCustomizerChartId) return;
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+    if (!plotEl || typeof Plotly === 'undefined') return;
+
+    try {
+        const trace = plotEl.data?.[traceIndex];
+        if (trace) {
+            trace.name = newName;
+            Plotly.redraw(plotEl);
+        }
+    } catch (e) {
+        console.error('Failed to update trace name:', e);
+    }
+}
+
 function applyCustomAxis(axis) {
     if (!activeCustomizerChartId) return;
     const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
@@ -161,5 +183,43 @@ function applyCustomLegend() {
         Plotly.relayout(plotEl, legendConfig[pos] || {});
     } catch (e) {
         console.error('Failed to update legend:', e);
+    }
+}
+
+async function saveCustomizedChart() {
+    if (!activeCustomizerChartId) return;
+
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+    if (!plotEl || !plotEl.data || !plotEl.layout) return;
+
+    const chartStateObj = (App.state.dashboardCharts || []).find(c => c.id === activeCustomizerChartId);
+    if (!chartStateObj) return;
+
+    try {
+        if (!chartStateObj.chart) chartStateObj.chart = {};
+
+        // Hard clone the data and layout to prevent circular JSON references
+        const liveData = JSON.parse(JSON.stringify(plotEl.data));
+        const liveLayout = JSON.parse(JSON.stringify(plotEl.layout));
+
+        chartStateObj.chart.data = liveData;
+        chartStateObj.chart.layout = liveLayout;
+
+        const titleVal = document.getElementById('custom-title')?.value;
+        if (titleVal !== undefined) {
+            chartStateObj.title = titleVal;
+            
+            // Sync widget input visually
+            const widgetTitleEl = document.querySelector(`.widget-header[data-widget-id="widget-dash-${activeCustomizerChartId}"] .widget-title`);
+            if (widgetTitleEl) widgetTitleEl.value = titleVal;
+        }
+
+        await saveDashboardToBackend();
+        closeChartCustomizer();
+    } catch (e) {
+        console.error('Error saving customised chart:', e);
+        if (typeof showAppError === 'function') {
+            showAppError("Failed to save chart customisations.");
+        }
     }
 }
