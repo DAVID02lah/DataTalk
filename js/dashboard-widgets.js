@@ -12,8 +12,8 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
     const hasChart = chartData.chart && chartData.chart.data;
 
     const contentHtml = `
-        <div class="widget-header" data-widget-id="${widgetId}">
-            <input class="widget-title" value="${escapeHtml(title)}" placeholder="Widget Title" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
+        <div class="widget-header retracted" data-widget-id="${widgetId}">
+            <input class="widget-title" value="${escapeHtml(title)}" placeholder="" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
             <div class="widget-actions">
                 <button class="widget-btn" onclick="toggleWidgetCollapse('${widgetId}')" title="Hold to Drag / Click to Collapse">↕</button>
                 <button class="widget-btn" onclick="openChartCustomizer('${chartId}')" title="Customise">⚙️</button>
@@ -53,11 +53,12 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
             if (plotEl && typeof Plotly !== 'undefined') {
                 try {
                     mountPlotlyChart(plotId, chartData.chart, {
-                        stripTitle: true,
+                        stripTitle: false,
                         layoutOverrides: {
                             width: undefined,
                             height: undefined,
                             margin: { l: 50, r: 30, t: 30, b: 50 },
+                            dragmode: false,
                         },
                         plotConfigOverrides: {
                             responsive: true,
@@ -94,8 +95,8 @@ function addDashboardCardWidget(cardData, widgetId, layoutOverrides) {
     const title = cardData.title || `${aggLabel} of ${cardData.column || 'Unknown'}`;
 
     const contentHtml = `
-        <div class="widget-header" data-widget-id="${widgetId}">
-            <input class="widget-title" value="${escapeHtml(title)}" placeholder="Card Title" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
+        <div class="widget-header retracted" data-widget-id="${widgetId}">
+            <input class="widget-title" value="${escapeHtml(title)}" placeholder="" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
             <div class="widget-actions">
                 <button class="widget-btn" onclick="toggleWidgetCollapse('${widgetId}')" title="Hold to Drag / Click to Collapse">↕</button>
                 <button class="widget-btn widget-btn-danger" onclick="removeDashCard('${cardId}')" title="Remove">×</button>

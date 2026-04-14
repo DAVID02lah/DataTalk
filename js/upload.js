@@ -313,6 +313,18 @@ function clearActiveFileUI() {
     const infoEl = document.getElementById("sidebar-file-info");
     if (infoEl) infoEl.style.display = "none";
 
+    const uploadSuccessBanner = document.getElementById("upload-success-banner");
+    if (uploadSuccessBanner) {
+        uploadSuccessBanner.style.display = "none";
+        uploadSuccessBanner.innerHTML = "";
+    }
+
+    const suggestionChips = document.getElementById("suggestion-chips");
+    if (suggestionChips) {
+        suggestionChips.innerHTML = "";
+    }
+    App.state.lastSuggestedQuestionsFile = null;
+
     const uploadContainer = document.getElementById("upload-container");
     const dataGridContainer = document.getElementById("data-grid-container");
     restoreUploadContainerMarkup();
@@ -330,6 +342,10 @@ function clearActiveFileUI() {
     if (previewToggle) previewToggle.style.display = "none";
 
     setDataSaveStatus("hidden");
+
+    if (typeof fetchSmartQuestions === 'function') {
+        fetchSmartQuestions({ force: true });
+    }
 }
 
 // --- Dataset loading from backend ---

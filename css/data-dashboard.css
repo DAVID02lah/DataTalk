@@ -165,7 +165,7 @@
     padding: 8px 12px;
     background: var(--surface-light);
     border-bottom: 1px solid var(--border-color);
-    cursor: move;
+    cursor: default;
     flex-shrink: 0;
     min-height: 36px;
     transition: transform 0.2s ease, opacity 0.2s ease;
@@ -234,6 +234,16 @@
     flex-direction: column;
     min-height: 0;
     background-color: #ffffff;
+    cursor: grab;
+}
+
+.grid-stack-item.ui-draggable-dragging .widget-body {
+    cursor: grabbing;
+}
+
+/* Prevent Plotly from intercepting mouse events during widget drag */
+.grid-stack-item.ui-draggable-dragging .js-plotly-plot {
+    pointer-events: none;
 }
 
 /* Chart container must fill the widget body */
@@ -379,7 +389,8 @@
 }
 
 /* ============================================
-   Chart Customizer Slide-Out Panel
+   Chart Customiser Slide-Out Panel
+   Aligned with sidebar design tokens
    ============================================ */
 
 .chart-customizer-panel {
@@ -388,10 +399,9 @@
     right: 0;
     width: 320px;
     height: 100vh;
-    background: #ffffff;
-    background: var(--surface-color, #ffffff);
+    background: var(--surface-secondary);
     border-left: 1px solid var(--border-color);
-    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
+    box-shadow: -8px 0 24px var(--shadow-color);
     z-index: 2000;
     display: flex;
     flex-direction: column;
@@ -414,6 +424,12 @@
     flex-shrink: 0;
 }
 
+.customizer-header h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
 .customizer-body {
     padding: 16px 20px;
     flex: 1;
@@ -426,37 +442,50 @@
 
 .customizer-section label {
     display: block;
-    font-size: 11px;
+    font-size: 0.72rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--text-muted);
+    color: var(--text-light);
     margin-bottom: 8px;
 }
 
 .customizer-section input[type="text"],
-.customizer-section input[type="color"],
-.customizer-section select {
+.customizer-section select,
+.customizer-section .trace-name-input {
     width: 100%;
-    padding: 10px 12px;
+    padding: 7px 9px;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
-    font-size: 13px;
-    background: var(--bg-color);
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-family: var(--font-family);
+    background: var(--surface-primary);
     color: var(--text-color);
+    transition: border-color 0.2s;
+}
+
+.customizer-section input[type="text"]:focus,
+.customizer-section select:focus,
+.customizer-section .trace-name-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
 }
 
 .customizer-section input[type="color"] {
-    height: 40px;
-    padding: 4px;
+    width: 100%;
+    height: 36px;
+    padding: 3px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
     cursor: pointer;
+    background: var(--surface-primary);
 }
 
 .customizer-section select {
     cursor: pointer;
 }
 
-/* Color picker row */
+/* Colour picker row */
 .color-picker-row {
     display: flex;
     align-items: center;
@@ -465,19 +494,15 @@
 }
 
 .color-picker-row input[type="color"] {
-    width: 40px;
+    width: 36px;
     height: 32px;
     padding: 2px;
     flex-shrink: 0;
 }
 
-.color-picker-row span {
-    font-size: 12px;
-    color: var(--text-color);
+.color-picker-row .trace-name-input {
     flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0;
 }
 
 /* ============================================
