@@ -1,5 +1,5 @@
 """
-data_service.py — Data loading and summarization utilities for Data Talk.
+data_service.py — Data loading and summarisation utilities for Data Talk.
 """
 
 import os
@@ -521,7 +521,7 @@ def get_data_profile(df):
         suggestions.extend([
             "Show trends over time with line charts",
             "Compute rolling averages to smooth out noise",
-            "Identify seasonal patterns or cyclical behavior",
+            "Identify seasonal patterns or cyclical behaviour",
             "Calculate period-over-period changes (growth rates)",
             "Find peak and trough periods"
         ])

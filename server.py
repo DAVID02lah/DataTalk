@@ -310,7 +310,7 @@ def _sse_event(event, data):
 
 
 def _auth_cookie_kwargs(max_age_seconds: int) -> dict[str, object]:
-    """Build cookie attributes in one place to keep auth cookie behavior consistent."""
+    """Build cookie attributes in one place to keep auth cookie behaviour consistent."""
     kwargs: dict[str, object] = {
         "httponly": True,
         "secure": app_config.AUTH_COOKIE_SECURE,
@@ -730,11 +730,12 @@ def _parse_chat_request():
     skip_cache = data.get("skip_cache", False)
 
     if not filename:
-        raise DataTalkError(
-            "Please upload a dataset first! Go to the **Data Connector** tab and upload a CSV or Excel file.",
-            status_code=400,
-            error_type="no_file"
-        )
+        if not gemini_service.is_conversational_query(message):
+            raise DataTalkError(
+                "Please upload a dataset first! Go to the **Data Connector** tab and upload a CSV or Excel file.",
+                status_code=400,
+                error_type="no_file"
+            )
 
     return message, filename, user_id, state, skip_cache
 
@@ -964,7 +965,7 @@ def clear_chat():
     except Exception as e:
         logger.error("Supabase client init failed during chat clear: %s", e)
     else:
-        # Keep dashboard visuals aligned with clear-chat behavior.
+        # Keep dashboard visuals aligned with clear-chat behaviour.
         for table_name, error_message in (
             ("chat_sessions", "Chat history clear failed from Supabase: %s"),
             ("dashboard_configs", "Dashboard clear failed from Supabase during chat clear: %s"),

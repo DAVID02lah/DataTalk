@@ -233,7 +233,7 @@ function openFullscreenChart(chartId) {
     setTimeout(() => {
         Plotly.newPlot("fullscreen-chart", sourceChart.data, layout, {
             responsive: true,
-            displayModeBar: true,
+            displayModeBar: false,
         });
 
         const closeBtn = overlay.querySelector('.close-fullscreen');
