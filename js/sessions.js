@@ -60,6 +60,11 @@ function applySessionPayload(sessionPayload) {
         App.state.maxChatSessions = Math.floor(maxSessions);
     }
 
+    const maxUploadMb = Number(sessionPayload.max_upload_mb);
+    if (Number.isFinite(maxUploadMb) && maxUploadMb > 0) {
+        App.state.maxUploadMb = maxUploadMb;
+    }
+
     if (Object.prototype.hasOwnProperty.call(sessionPayload, "active_session_id")) {
         App.state.activeSessionId = sessionPayload.active_session_id || null;
     }

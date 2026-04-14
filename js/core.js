@@ -25,6 +25,7 @@ const App = {
         chatSessions: [],           // Conversation session summaries
         activeSessionId: null,      // Active conversation session id
         maxChatSessions: 2,         // Backend-configured conversation cap
+        maxUploadMb: null,          // Backend-configured upload cap (MB)
         user: null,                 // Authenticated user profile from /api/auth/session
     },
 

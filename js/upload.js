@@ -412,18 +412,25 @@ async function loadDatasetForPath(filePath, options = {}) {
     }
 }
 
+function getMaxUploadSizeMb() {
+    const configuredMax = Number(App.state.maxUploadMb);
+    if (Number.isFinite(configuredMax) && configuredMax > 0) {
+        return configuredMax;
+    }
+    return null;
+}
+
 // --- Main upload handler ---
 
 async function handleFileUpload(files) {
     const file = files[0];
     if (!file) return;
 
-    // Client-side upload validation (1MB limit)
-    const MAX_SIZE_MB = 1;
-    if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+    const maxSizeMb = getMaxUploadSizeMb();
+    if (maxSizeMb !== null && file.size > maxSizeMb * 1024 * 1024) {
         showUploadError(
             document.getElementById("upload-container"),
-            `File size exceeds ${MAX_SIZE_MB}MB limit. Please upload a smaller dataset.`
+            `File size exceeds ${maxSizeMb}MB limit. Please upload a smaller dataset.`
         );
         return;
     }
