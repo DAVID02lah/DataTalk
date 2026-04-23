@@ -11,18 +11,20 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
     const plotId = `dash-plot-${chartId}`;
     const hasChart = chartData.chart && chartData.chart.data;
 
+    const bgStyle = chartData.bgColor ? `background-color:${chartData.bgColor};` : '';
+
     const contentHtml = `
         <div class="widget-header retracted" data-widget-id="${widgetId}">
             <input class="widget-title" value="${escapeHtml(title)}" placeholder="" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
             <div class="widget-actions">
                 <button class="widget-btn" onclick="toggleWidgetCollapse('${widgetId}')" title="Hold to Drag / Click to Collapse">↕</button>
-                <button class="widget-btn" onclick="openChartCustomizer('${chartId}')" title="Customise">⚙️</button>
+                <button class="widget-btn" onclick="openWidgetCustomizer('${widgetId}')" title="Customise">⚙️</button>
                 <button class="widget-btn" onclick="openFullscreenChart('${plotId}')" title="Fullscreen">🔍</button>
                 <button class="widget-btn" onclick="downloadDashChart('${plotId}')" title="Download PNG">📥</button>
                 <button class="widget-btn widget-btn-danger" onclick="removeDashChart('${chartId}')" title="Remove">×</button>
             </div>
         </div>
-        <div class="widget-body" id="body-${chartId}">
+        <div class="widget-body" id="body-${chartId}" style="${bgStyle}">
             ${hasChart
             ? `<div id="${plotId}" class="chart-container"></div>`
             : `<div class="widget-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">No chart data</div>`
@@ -94,15 +96,18 @@ function addDashboardCardWidget(cardData, widgetId, layoutOverrides) {
     const aggLabel = formatAggregationLabel(cardData.aggregation || 'count');
     const title = cardData.title || `${aggLabel} of ${cardData.column || 'Unknown'}`;
 
+    const bgStyle = cardData.bgColor ? `background-color:${cardData.bgColor};` : '';
+
     const contentHtml = `
         <div class="widget-header retracted" data-widget-id="${widgetId}">
             <input class="widget-title" value="${escapeHtml(title)}" placeholder="" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
             <div class="widget-actions">
                 <button class="widget-btn" onclick="toggleWidgetCollapse('${widgetId}')" title="Hold to Drag / Click to Collapse">↕</button>
+                <button class="widget-btn" onclick="openWidgetCustomizer('${widgetId}')" title="Customise">⚙️</button>
                 <button class="widget-btn widget-btn-danger" onclick="removeDashCard('${cardId}')" title="Remove">×</button>
             </div>
         </div>
-        <div class="widget-body kpi-card-body" id="card-body-${cardId}">
+        <div class="widget-body kpi-card-body" id="card-body-${cardId}" style="${bgStyle}">
             <div class="kpi-value">${escapeHtml(formattedValue)}</div>
             <div class="kpi-label">${escapeHtml(aggLabel)} of ${escapeHtml(cardData.column || '')}</div>
         </div>
@@ -215,21 +220,10 @@ function clearDashboard() {
 // --- Widget Mechanics ---
 
 async function updateWidgetTitle(widgetId, newTitle) {
-    if (widgetId.startsWith('widget-dash-')) {
-        const id = widgetId.replace('widget-dash-', '');
-        const chart = (App.state.dashboardCharts || []).find(c => c.id === id);
-        if (chart) {
-            chart.title = newTitle;
-            await saveDashboardToBackend();
-        }
-    } else if (widgetId.startsWith('widget-card-')) {
-        const id = widgetId.replace('widget-card-', '');
-        const card = (App.state.dashboardCards || []).find(c => c.id === id);
-        if (card) {
-            card.title = newTitle;
-            await saveDashboardToBackend();
-        }
-    }
+    const stateItem = findWidgetStateItem(widgetId);
+    if (!stateItem) return;
+    stateItem.title = newTitle;
+    await saveDashboardToBackend();
 }
 
 function toggleWidgetCollapse(widgetId) {
@@ -237,10 +231,33 @@ function toggleWidgetCollapse(widgetId) {
     if (header) {
         header.classList.toggle('retracted');
         
-        // Trigger a fake resize event slightly after to ensure Plotly recalculates properly 
-        // since the container just expanded
+        // Plotly needs a resize event to recalculate after the header expands
         setTimeout(() => {
             window.dispatchEvent(new Event('resize'));
         }, 150);
     }
+}
+
+function findWidgetStateItem(widgetId) {
+    if (widgetId.startsWith('widget-dash-')) {
+        const id = widgetId.replace('widget-dash-', '');
+        return (App.state.dashboardCharts || []).find(c => c.id === id);
+    }
+    if (widgetId.startsWith('widget-card-')) {
+        const id = widgetId.replace('widget-card-', '');
+        return (App.state.dashboardCards || []).find(c => c.id === id);
+    }
+    return null;
+}
+
+function findWidgetBodyElement(widgetId) {
+    if (widgetId.startsWith('widget-dash-')) {
+        const id = widgetId.replace('widget-dash-', '');
+        return document.getElementById(`body-${id}`);
+    }
+    if (widgetId.startsWith('widget-card-')) {
+        const id = widgetId.replace('widget-card-', '');
+        return document.getElementById(`card-body-${id}`);
+    }
+    return null;
 }

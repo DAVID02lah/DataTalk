@@ -156,27 +156,27 @@ async function fetchSmartQuestions(options = {}) {
     }
 
     smartQuestionsRequest = (async () => {
-    try {
-        const response = await fetch(`${App.API_BASE}/api/suggest-questions`, {
-            headers: App.getAuthHeaders()
-        });
-        const data = await response.json();
-        const questions = data.questions || [];
-        if (questions.length === 0) return;
+        try {
+            const response = await fetch(`${App.API_BASE}/api/suggest-questions`, {
+                headers: App.getAuthHeaders()
+            });
+            const data = await response.json();
+            const questions = data.questions || [];
+            if (questions.length === 0) return;
 
-        const chipsContainer = document.getElementById("suggestion-chips");
-        if (chipsContainer) {
-            chipsContainer.innerHTML = questions.map(q =>
-                `<div class="suggestion-chip" onclick="useSuggestion(this)">${escapeHtml(q)}</div>`
-            ).join("");
+            const chipsContainer = document.getElementById("suggestion-chips");
+            if (chipsContainer) {
+                chipsContainer.innerHTML = questions.map(q =>
+                    `<div class="suggestion-chip" onclick="useSuggestion(this)">${escapeHtml(q)}</div>`
+                ).join("");
+            }
+
+            App.state.lastSuggestedQuestionsFile = activeFilename || null;
+        } catch (e) {
+            console.log("Could not fetch smart questions:", e.message);
+        } finally {
+            smartQuestionsRequest = null;
         }
-
-        App.state.lastSuggestedQuestionsFile = activeFilename || null;
-    } catch (e) {
-        console.log("Could not fetch smart questions:", e.message);
-    } finally {
-        smartQuestionsRequest = null;
-    }
     })();
 
     return smartQuestionsRequest;
@@ -270,21 +270,21 @@ async function refreshDashboard() {
     }
 
     dashboardRefreshPromise = (async () => {
-    try {
-        const { data } = await fetchApiJson(withDashboardSession(`${App.API_BASE}/api/dashboard`), {
-            headers: App.getAuthHeaders()
-        });
-        applyDashboardPayload(data);
-        renderDashboardGrid();
-        return data;
-    } catch (e) {
-        console.error("Failed to load dashboard:", e);
-        applyDashboardPayload({ charts: [], cards: [] });
-        renderDashboardGrid();
-        return null;
-    } finally {
-        dashboardRefreshPromise = null;
-    }
+        try {
+            const { data } = await fetchApiJson(withDashboardSession(`${App.API_BASE}/api/dashboard`), {
+                headers: App.getAuthHeaders()
+            });
+            applyDashboardPayload(data);
+            renderDashboardGrid();
+            return data;
+        } catch (e) {
+            console.error("Failed to load dashboard:", e);
+            applyDashboardPayload({ charts: [], cards: [] });
+            renderDashboardGrid();
+            return null;
+        } finally {
+            dashboardRefreshPromise = null;
+        }
     })();
 
     return dashboardRefreshPromise;
@@ -319,3 +319,54 @@ document.addEventListener('keydown', function (event) {
         }
     }
 });
+
+/**
+ * Export the dashboard layout (GridStack) into PDF or PNG
+ * using html2canvas / jsPDF.
+ */
+async function exportDashboard(format) {
+    const canvas = document.getElementById('dashboard-canvas');
+    if (!canvas) return;
+
+    const originalShadow = canvas.style.boxShadow;
+    const originalBorder = canvas.style.border;
+    canvas.style.boxShadow = 'none';
+    canvas.style.border = 'none';
+
+    try {
+        // We use html2pdf which bundles jsPDF and html2canvas internally
+        if (format === 'pdf') {
+            const width = canvas.offsetWidth;
+            const height = canvas.offsetHeight;
+            const opt = {
+                margin: 0,
+                filename: 'DataTalk_Dashboard.pdf',
+                image: { type: 'jpeg', quality: 1 },
+                html2canvas: { scale: 2, useCORS: true, logging: false },
+                jsPDF: { unit: 'px', format: [width, height], orientation: width > height ? 'landscape' : 'portrait' }
+            };
+            if (typeof window.html2pdf === 'function') {
+                await window.html2pdf().set(opt).from(canvas).save();
+            } else {
+                alert("PDF export library not loaded. Please check your internet connection.");
+            }
+        } else if (format === 'png') {
+            if (typeof window.html2canvas === 'function') {
+                const canvasElement = await window.html2canvas(canvas, { scale: 2, useCORS: true, logging: false });
+                const imgData = canvasElement.toDataURL('image/png');
+                const link = document.createElement('a');
+                link.download = 'DataTalk_Dashboard.png';
+                link.href = imgData;
+                link.click();
+            } else {
+                alert("PNG export library not loaded. Please check your internet connection.");
+            }
+        }
+    } catch (e) {
+        console.error("Export failed:", e);
+        alert("Failed to export the dashboard. Please verify charts are rendered fully.");
+    } finally {
+        canvas.style.boxShadow = originalShadow;
+        canvas.style.border = originalBorder;
+    }
+}

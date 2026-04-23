@@ -263,7 +263,7 @@ def update_profile(user_id: str, display_name: str) -> dict:
 
     payload = {
         "id": user_id,
-        "display_name": cleaned[:80],
+        "display_name": cleaned[:50],
         "avatar_initials": initials[:2],
     }
 
@@ -312,3 +312,40 @@ def require_auth(f):
         return f(*args, **kwargs)
 
     return decorated
+
+
+def reset_password(email: str, redirect_to: str = None) -> dict:
+    """Send a password reset email to the user."""
+    sb = get_supabase()
+    try:
+        opt = {}
+        if redirect_to:
+            opt["redirect_to"] = redirect_to
+        sb.auth.reset_password_email(email, options=opt)
+        return {"success": True}
+    except Exception as e:
+        error_msg = str(e)
+        logger.error("Reset password error: %s", error_msg)
+        if isinstance(e, AuthenticationError):
+            raise
+        raise AuthenticationError(error_msg)
+
+
+def update_password(access_token: str, new_password: str) -> dict:
+    """Update user password using a recovery access token."""
+    try:
+        user_info = verify_token(access_token)
+        if not user_info:
+            raise AuthenticationError("Invalid or expired recovery token")
+
+        user_id = user_info['id']
+        admin_sb = get_supabase_service()
+        admin_sb.auth.admin.update_user_by_id(user_id, {"password": new_password})
+        
+        return {"success": True}
+    except Exception as e:
+        error_msg = str(e)
+        logger.error("Update password error: %s", error_msg)
+        if isinstance(e, AuthenticationError):
+            raise
+        raise AuthenticationError(error_msg)

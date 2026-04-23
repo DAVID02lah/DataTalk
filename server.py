@@ -437,8 +437,10 @@ def api_signup():
 
     if not email or not password:
         raise ValidationError("Email and password are required")
-    if len(password) < 6:
-        raise ValidationError("Password must be at least 6 characters")
+    if len(password) < 8:
+        raise ValidationError("Password must be at least 8 characters")
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+        raise ValidationError("Password must contain at least one special character")
 
     result = auth_service.signup(email, password, display_name)
 
@@ -476,6 +478,36 @@ def api_login():
     })
     _set_auth_cookies(response, result.get("access_token"), result.get("refresh_token"))
     return response
+
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def api_reset_password():
+    """Request a password reset email."""
+    data = request.get_json()
+    email = data.get("email", "").strip() if data else ""
+    if not email:
+        raise ValidationError("Email is required")
+        
+    redirect_to = str(request.url_root).rstrip("/") + "/login.html"
+    auth_service.reset_password(email, redirect_to=redirect_to)
+    return jsonify({"success": True, "message": "Password reset email sent."})
+
+
+@app.route("/api/auth/update-password", methods=["POST"])
+def api_update_password():
+    """Update password using a recovery token."""
+    data = request.get_json()
+    if not data:
+        raise ValidationError("No data provided")
+        
+    token = data.get("access_token", "")
+    new_password = data.get("password", "")
+    
+    if not token or not new_password:
+        raise ValidationError("Token and new password are required")
+        
+    auth_service.update_password(token, new_password)
+    return jsonify({"success": True, "message": "Password updated successfully."})
 
 
 @app.route("/api/auth/logout", methods=["POST"])
