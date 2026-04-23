@@ -28,6 +28,9 @@
     <link href="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack-extra.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/gridstack@10/dist/gridstack-all.js"></script>
+    <!-- Export Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 
 <body>
@@ -228,6 +231,24 @@
                                 <span class="dashboard-chart-count-badge" id="dashboard-chart-count">0 charts</span>
                             </div>
                             <div class="dashboard-toolbar-right">
+                                <button class="btn-dashboard-action" onclick="exportDashboard('pdf')" title="Export as PDF">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                        <line x1="12" y1="18" x2="12" y2="12"></line>
+                                        <polyline points="9 15 12 18 15 15"></polyline>
+                                    </svg>
+                                    PDF
+                                </button>
+                                <button class="btn-dashboard-action" onclick="exportDashboard('png')" title="Export as PNG">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                        <polyline points="21 15 16 10 5 21"></polyline>
+                                    </svg>
+                                    PNG
+                                </button>
+                                <div style="width: 1px; height: 24px; background: var(--border-color); margin: 0 4px;"></div>
                                 <button class="btn-dashboard-action" onclick="showAddCardModal()">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                         stroke-width="2">
@@ -290,34 +311,39 @@
         <div class="customizer-body">
             <!-- Title -->
             <div class="customizer-section">
-                <label>Chart Title</label>
+                <label>Title</label>
                 <input type="text" id="custom-title" oninput="applyCustomTitle()" placeholder="Enter title...">
             </div>
-            <!-- Colors -->
+            <!-- Background Color -->
             <div class="customizer-section">
+                <label>Background Color</label>
+                <input type="color" id="custom-bg-color" oninput="applyWidgetBgColor()">
+            </div>
+            <!-- Trace Colors (chart only) -->
+            <div class="customizer-section" data-chart-only>
                 <label>Trace Colors</label>
                 <div id="custom-color-pickers"></div>
             </div>
-            <!-- X-Axis -->
-            <div class="customizer-section">
+            <!-- X-Axis (chart only) -->
+            <div class="customizer-section" data-chart-only>
                 <label>X-Axis Label</label>
                 <input type="text" id="custom-xaxis" oninput="applyCustomAxis('x')" placeholder="X-axis label...">
             </div>
-            <!-- Y-Axis -->
-            <div class="customizer-section">
+            <!-- Y-Axis (chart only) -->
+            <div class="customizer-section" data-chart-only>
                 <label>Y-Axis Label</label>
                 <input type="text" id="custom-yaxis" oninput="applyCustomAxis('y')" placeholder="Y-axis label...">
             </div>
-            <!-- Scale -->
-            <div class="customizer-section">
+            <!-- Scale (chart only) -->
+            <div class="customizer-section" data-chart-only>
                 <label>Y-Axis Scale</label>
                 <select id="custom-scale" onchange="applyCustomScale()">
                     <option value="linear">Linear</option>
                     <option value="log">Logarithmic</option>
                 </select>
             </div>
-            <!-- Legend -->
-            <div class="customizer-section">
+            <!-- Legend (chart only) -->
+            <div class="customizer-section" data-chart-only>
                 <label>Legend Position</label>
                 <select id="custom-legend" onchange="applyCustomLegend()">
                     <option value="right">Right</option>
@@ -328,7 +354,7 @@
             </div>
             <!-- Save Button -->
             <div class="customizer-section" style="margin-top: 24px;">
-                <button class="btn btn-primary" onclick="saveCustomizedChart()" style="width: 100%; justify-content: center; font-size: 0.82rem; padding: 10px 16px;">Save Changes</button>
+                <button class="btn btn-primary" id="save-customizer-btn" onclick="saveCustomizedChart()" style="width: 100%; justify-content: center; font-size: 0.82rem; padding: 10px 16px;">Save Changes</button>
             </div>
         </div>
     </div>

@@ -180,6 +180,19 @@ function showUploadSuccess(result) {
                 <p>${escapeHtml(`${s.shape.rows} rows × ${s.shape.columns} columns — ${s.columns.slice(0, 4).join(", ")}${s.columns.length > 4 ? "..." : ""}`)}</p>
             </div>
         </div>
+        <div class="upload-next-steps">
+            <div class="next-steps-header">
+                <span class="next-steps-icon">🚀</span>
+                <h4>What's Next?</h4>
+            </div>
+            <ol class="next-steps-list">
+                <li><strong>Chat Analysis</strong> — Ask questions about your data in natural language</li>
+                <li><strong>Visualisations</strong> — Pin charts to a dashboard canvas</li>
+            </ol>
+            <button class="btn btn-primary next-steps-cta" id="goto-chat-btn" onclick="switchView('chat')">
+                Start Analysing →
+            </button>
+        </div>
     `;
     banner.style.display = "block";
 }

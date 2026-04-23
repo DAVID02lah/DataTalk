@@ -1,15 +1,70 @@
-// Chart customizer panel — live editing of Plotly chart properties.
+// Widget customizer panel — live editing of chart and widget visual properties.
 
 let activeCustomizerChartId = null;
+let activeCustomizerWidgetId = null;
 
-function openChartCustomizer(chartId) {
-    activeCustomizerChartId = chartId;
+// --- Entry Point ---
+
+function openWidgetCustomizer(widgetId) {
+    activeCustomizerWidgetId = widgetId;
     const panel = document.getElementById('chart-customizer');
     if (!panel) return;
 
-    panel.classList.add('visible');
+    const isChart = widgetId.startsWith('widget-dash-');
 
-    const plotEl = document.getElementById(`dash-plot-${chartId}`);
+    updateCustomizerHeading(isChart);
+    setChartSectionsVisible(isChart);
+
+    if (isChart) {
+        activeCustomizerChartId = widgetId.replace('widget-dash-', '');
+        populateChartFields();
+    } else {
+        activeCustomizerChartId = null;
+        populateWidgetTitle();
+    }
+
+    populateBgColorField();
+    panel.classList.add('visible');
+}
+
+function closeChartCustomizer() {
+    const panel = document.getElementById('chart-customizer');
+    if (panel) panel.classList.remove('visible');
+    activeCustomizerChartId = null;
+    activeCustomizerWidgetId = null;
+}
+
+// --- Panel Setup ---
+
+function updateCustomizerHeading(isChart) {
+    const heading = document.querySelector('#chart-customizer .customizer-header h3');
+    if (heading) heading.textContent = isChart ? 'Customise Chart' : 'Customise Card';
+}
+
+function setChartSectionsVisible(visible) {
+    document.querySelectorAll('[data-chart-only]').forEach(el => {
+        el.style.display = visible ? '' : 'none';
+    });
+}
+
+// --- Field Population ---
+
+function populateWidgetTitle() {
+    const titleInput = document.getElementById('custom-title');
+    if (!titleInput) return;
+    const stateItem = findWidgetStateItem(activeCustomizerWidgetId);
+    titleInput.value = stateItem?.title || '';
+}
+
+function populateBgColorField() {
+    const input = document.getElementById('custom-bg-color');
+    if (!input) return;
+    const stateItem = findWidgetStateItem(activeCustomizerWidgetId);
+    input.value = stateItem?.bgColor || '#ffffff';
+}
+
+function populateChartFields() {
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
     if (!plotEl || !plotEl.data) {
         console.warn('No plot data for customizer');
         return;
@@ -22,73 +77,73 @@ function openChartCustomizer(chartId) {
     const yaxisInput = document.getElementById('custom-yaxis');
     const scaleSelect = document.getElementById('custom-scale');
 
-    if (titleInput) {
-        titleInput.value = (typeof layout.title === 'object' ? layout.title.text : layout.title) || '';
-    }
-    if (xaxisInput) {
-        xaxisInput.value = layout.xaxis?.title?.text || layout.xaxis?.title || '';
-    }
-    if (yaxisInput) {
-        yaxisInput.value = layout.yaxis?.title?.text || layout.yaxis?.title || '';
-    }
-    if (scaleSelect) {
-        scaleSelect.value = layout.yaxis?.type || 'linear';
-    }
+    if (titleInput) titleInput.value = (typeof layout.title === 'object' ? layout.title.text : layout.title) || '';
+    if (xaxisInput) xaxisInput.value = layout.xaxis?.title?.text || layout.xaxis?.title || '';
+    if (yaxisInput) yaxisInput.value = layout.yaxis?.title?.text || layout.yaxis?.title || '';
+    if (scaleSelect) scaleSelect.value = layout.yaxis?.type || 'linear';
 
-    // Generate color pickers for each trace
-    const colorDiv = document.getElementById('custom-color-pickers');
-    if (colorDiv && plotEl.data) {
-        colorDiv.innerHTML = plotEl.data.map((trace, i) => {
-            const color = getTraceColor(trace);
-            const name = trace.name || `Trace ${i + 1}`;
-            return `
-                <div class="color-picker-row">
-                    <input type="color" value="${color}" data-trace-index="${i}">
-                    <input type="text" class="trace-name-input" value="${escapeHtml(name)}" data-trace-index="${i}" placeholder="Trace name">
-                </div>
-            `;
-        }).join('');
-
-        colorDiv.querySelectorAll('input[type="color"]').forEach((inputEl) => {
-            const traceIndex = Number(inputEl.dataset.traceIndex || "0");
-            inputEl.addEventListener("input", () => applyTraceColor(traceIndex, inputEl.value));
-            inputEl.addEventListener("change", () => applyTraceColor(traceIndex, inputEl.value));
-        });
-
-        colorDiv.querySelectorAll('input.trace-name-input').forEach((inputEl) => {
-            const traceIndex = Number(inputEl.dataset.traceIndex || "0");
-            inputEl.addEventListener("input", () => applyTraceName(traceIndex, inputEl.value));
-            inputEl.addEventListener("change", () => applyTraceName(traceIndex, inputEl.value));
-        });
-    }
+    populateTraceColorPickers(plotEl);
 }
+
+function populateTraceColorPickers(plotEl) {
+    const colorDiv = document.getElementById('custom-color-pickers');
+    if (!colorDiv || !plotEl.data) return;
+
+    colorDiv.innerHTML = plotEl.data.map((trace, i) => {
+        const color = getTraceColor(trace);
+        const name = trace.name || `Trace ${i + 1}`;
+        return `
+            <div class="color-picker-row">
+                <input type="color" value="${color}" data-trace-index="${i}">
+                <input type="text" class="trace-name-input" value="${escapeHtml(name)}" data-trace-index="${i}" placeholder="Trace name">
+            </div>
+        `;
+    }).join('');
+
+    colorDiv.querySelectorAll('input[type="color"]').forEach(inputEl => {
+        const i = Number(inputEl.dataset.traceIndex || "0");
+        inputEl.addEventListener("input", () => applyTraceColor(i, inputEl.value));
+        inputEl.addEventListener("change", () => applyTraceColor(i, inputEl.value));
+    });
+
+    colorDiv.querySelectorAll('input.trace-name-input').forEach(inputEl => {
+        const i = Number(inputEl.dataset.traceIndex || "0");
+        inputEl.addEventListener("input", () => applyTraceName(i, inputEl.value));
+        inputEl.addEventListener("change", () => applyTraceName(i, inputEl.value));
+    });
+}
+
+// --- Live Apply ---
 
 function getTraceColor(trace) {
     const color = trace.marker?.color || trace.line?.color || '#4285f4';
     if (Array.isArray(color)) return color[0] || '#4285f4';
     if (typeof color === 'string' && color.startsWith('#')) return color;
-    if (typeof color === 'string' && color.startsWith('rgb')) {
-        return '#4285f4';
-    }
     return '#4285f4';
 }
 
-function closeChartCustomizer() {
-    const panel = document.getElementById('chart-customizer');
-    if (panel) panel.classList.remove('visible');
-    activeCustomizerChartId = null;
-}
-
 function applyCustomTitle() {
-    if (!activeCustomizerChartId) return;
-    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
     const titleInput = document.getElementById('custom-title');
-    if (!plotEl || !titleInput || typeof Plotly === 'undefined') return;
+    if (!titleInput) return;
 
-    try {
-        Plotly.relayout(plotEl, { 'title.text': titleInput.value });
-    } catch (e) {
-        console.error('Failed to update title:', e);
+    // Charts also have a Plotly title that needs syncing
+    if (activeCustomizerChartId) {
+        const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+        if (plotEl && typeof Plotly !== 'undefined') {
+            try {
+                Plotly.relayout(plotEl, { 'title.text': titleInput.value });
+            } catch (e) {
+                console.error('Failed to update title:', e);
+            }
+        }
+    }
+
+    // Header title input must stay in sync so the user sees the change outside the panel
+    if (activeCustomizerWidgetId) {
+        const headerEl = document.querySelector(
+            `.widget-header[data-widget-id="${activeCustomizerWidgetId}"] .widget-title`
+        );
+        if (headerEl) headerEl.value = titleInput.value;
     }
 }
 
@@ -99,10 +154,7 @@ function applyTraceColor(traceIndex, color) {
 
     try {
         const trace = plotEl.data?.[traceIndex] || {};
-
-        if (!trace.marker) {
-            trace.marker = {};
-        }
+        if (!trace.marker) trace.marker = {};
 
         if (Array.isArray(trace.marker.color)) {
             trace.marker.color = trace.marker.color.map(() => color);
@@ -110,12 +162,8 @@ function applyTraceColor(traceIndex, color) {
             trace.marker.color = color;
         }
 
-        if (trace.line) {
-            trace.line.color = color;
-        }
-        if (trace.fillcolor) {
-            trace.fillcolor = color;
-        }
+        if (trace.line) trace.line.color = color;
+        if (trace.fillcolor) trace.fillcolor = color;
 
         Plotly.redraw(plotEl);
     } catch (e) {
@@ -186,40 +234,88 @@ function applyCustomLegend() {
     }
 }
 
+function applyWidgetBgColor() {
+    if (!activeCustomizerWidgetId) return;
+    const input = document.getElementById('custom-bg-color');
+    if (!input) return;
+
+    const bodyEl = findWidgetBodyElement(activeCustomizerWidgetId);
+    if (bodyEl) bodyEl.style.backgroundColor = input.value;
+}
+
+// --- Save ---
+
 async function saveCustomizedChart() {
-    if (!activeCustomizerChartId) return;
+    if (!activeCustomizerWidgetId) return;
 
-    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
-    if (!plotEl || !plotEl.data || !plotEl.layout) return;
+    const stateItem = findWidgetStateItem(activeCustomizerWidgetId);
+    if (!stateItem) return;
 
-    const chartStateObj = (App.state.dashboardCharts || []).find(c => c.id === activeCustomizerChartId);
-    if (!chartStateObj) return;
+    const saveBtn = document.getElementById('save-customizer-btn');
 
     try {
-        if (!chartStateObj.chart) chartStateObj.chart = {};
+        showSaveButtonState(saveBtn, 'saving');
 
-        // Hard clone the data and layout to prevent circular JSON references
-        const liveData = JSON.parse(JSON.stringify(plotEl.data));
-        const liveLayout = JSON.parse(JSON.stringify(plotEl.layout));
+        // Default white is treated as "no custom color" to keep serialised state minimal
+        const bgInput = document.getElementById('custom-bg-color');
+        if (bgInput) {
+            const color = bgInput.value;
+            if (color && color !== '#ffffff') {
+                stateItem.bgColor = color;
+            } else {
+                delete stateItem.bgColor;
+            }
+        }
 
-        chartStateObj.chart.data = liveData;
-        chartStateObj.chart.layout = liveLayout;
+        // Plotly stores chart data in the DOM — snapshot it to persist across sessions
+        if (activeCustomizerChartId) {
+            saveChartPlotlyState(stateItem);
+        }
 
+        // Widget header title and state must stay in sync for persistence
         const titleVal = document.getElementById('custom-title')?.value;
         if (titleVal !== undefined) {
-            chartStateObj.title = titleVal;
-            
-            // Sync widget input visually
-            const widgetTitleEl = document.querySelector(`.widget-header[data-widget-id="widget-dash-${activeCustomizerChartId}"] .widget-title`);
+            stateItem.title = titleVal;
+            const widgetTitleEl = document.querySelector(
+                `.widget-header[data-widget-id="${activeCustomizerWidgetId}"] .widget-title`
+            );
             if (widgetTitleEl) widgetTitleEl.value = titleVal;
         }
 
         await saveDashboardToBackend();
-        closeChartCustomizer();
+        showSaveButtonState(saveBtn, 'success');
+
+        // Brief pause so user sees confirmation before panel closes
+        setTimeout(() => closeChartCustomizer(), 800);
     } catch (e) {
-        console.error('Error saving customised chart:', e);
-        if (typeof showAppError === 'function') {
-            showAppError("Failed to save chart customisations.");
-        }
+        console.error('Error saving customisations:', e);
+        showSaveButtonState(saveBtn, 'error');
     }
+}
+
+function showSaveButtonState(btn, state) {
+    if (!btn) return;
+
+    const labels = { saving: 'Saving...', success: '✓ Saved!', error: '✗ Save Failed' };
+    btn.textContent = labels[state] || 'Save Changes';
+    btn.disabled = state === 'saving';
+
+    // Reset button after error so user can retry
+    if (state === 'error') {
+        setTimeout(() => {
+            btn.textContent = 'Save Changes';
+            btn.disabled = false;
+        }, 2000);
+    }
+}
+
+function saveChartPlotlyState(stateItem) {
+    const plotEl = document.getElementById(`dash-plot-${activeCustomizerChartId}`);
+    if (!plotEl || !plotEl.data || !plotEl.layout) return;
+
+    if (!stateItem.chart) stateItem.chart = {};
+
+    // Hard clone to prevent circular JSON references
+    stateItem.chart.data = JSON.parse(JSON.stringify(plotEl.data));
+    stateItem.chart.layout = JSON.parse(JSON.stringify(plotEl.layout));
 }
