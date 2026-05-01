@@ -5,6 +5,7 @@ Handles user signup, login, JWT verification, and provides
 a Flask decorator for protecting API routes.
 """
 
+import re
 import base64
 import functools
 import json
@@ -136,8 +137,23 @@ def get_supabase_service() -> Client:
 
 # --- Auth Operations ---
 
+def _validate_password_complexity(password: str) -> None:
+    """Validate password meets security policies."""
+    if len(password) < 8:
+        raise ValidationError("Password must be at least 8 characters.")
+    
+    # Must contain at least one letter to prevent passwords made entirely of symbols/numbers
+    if not re.search(r'[a-zA-Z]', password):
+        raise ValidationError("Password must contain at least one letter (a-z, A-Z).")
+        
+    # Must contain at least one special character
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        raise ValidationError("Password must contain at least one special character (e.g., @, #, $, %).")
+
 def signup(email: str, password: str, display_name: str = "") -> dict:
     """Register a new user via Supabase Auth."""
+    _validate_password_complexity(password)
+    
     sb = get_supabase()
     try:
         result = sb.auth.sign_up({
@@ -333,6 +349,8 @@ def reset_password(email: str, redirect_to: str = None) -> dict:
 
 def update_password(access_token: str, new_password: str) -> dict:
     """Update user password using a recovery access token."""
+    _validate_password_complexity(new_password)
+    
     try:
         user_info = verify_token(access_token)
         if not user_info:
