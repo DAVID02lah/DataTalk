@@ -88,7 +88,9 @@
             <section class="sidebar-panel" id="conversation-panel">
                 <div class="sidebar-panel-header">
                     <span>Conversations</span>
-                    <button class="sidebar-mini-btn" onclick="createNewConversation()" title="New conversation">+ New</button>
+                </div>
+                <div id="new-conversation-btn" class="conversation-item new-btn" onclick="createNewConversation()" title="New conversation">
+                    <div class="conversation-title" style="margin: 0; font-size: 0.8rem; text-align: center;">+ New Conversation</div>
                 </div>
                 <div id="conversation-list" class="conversation-list"></div>
             </section>
@@ -313,11 +315,6 @@
             <div class="customizer-section">
                 <label>Title</label>
                 <input type="text" id="custom-title" oninput="applyCustomTitle()" placeholder="Enter title...">
-            </div>
-            <!-- Background Color -->
-            <div class="customizer-section">
-                <label>Background Color</label>
-                <input type="color" id="custom-bg-color" oninput="applyWidgetBgColor()">
             </div>
             <!-- Trace Colors (chart only) -->
             <div class="customizer-section" data-chart-only>

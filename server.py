@@ -36,6 +36,7 @@ from src.services import gemini_service
 from src.services import auth_service
 from src.services import chat_session_service
 from src.services import usage_service
+from src.services import rate_limit_store
 from src.services.auth_service import require_auth
 from src.core.errors import DataTalkError, ValidationError, LimitExceededError
 from src.services.analysis_pipeline import run_analysis_pipeline
@@ -470,6 +471,9 @@ def api_login():
 
     user_id = result["user"]["id"]
     _load_chat_history_for_user(user_id)
+    # Restore rate-limit state from DB so limits survive across sessions.
+    state = session_mgr.get_state(user_id)
+    rate_limit_store.rehydrate_into_state(state, user_id, app_config.RATE_LIMIT)
     _log_event("user_login", user_id=user_id, email=email)
 
     response = jsonify({
@@ -514,6 +518,11 @@ def api_update_password():
 @require_auth
 def api_logout():
     """Sign out the current user."""
+    # Persist rate-limit timestamps before destroying in-memory state.
+    state = session_mgr.get_state(g.user_id)
+    usage_service.ensure_usage_state(state)
+    rate_limit_store.save_timestamps(g.user_id, state.message_request_times)
+
     token = getattr(g, "access_token", "")
     if token:
         auth_service.logout(token)
@@ -531,6 +540,9 @@ def api_session():
     state = _get_user_state()
     if not state.chat_sessions and not state.active_file.get("filename"):
         _load_chat_history_for_user(g.user_id)
+    # Restore rate-limit state if the in-memory deque was lost (e.g. session eviction).
+    if not state.message_request_times:
+        rate_limit_store.rehydrate_into_state(state, g.user_id, app_config.RATE_LIMIT)
 
     profile = auth_service.get_profile(g.user_id)
     display_name = g.user_email.split("@")[0]
@@ -768,12 +780,19 @@ def _parse_chat_request():
                 error_type="no_file"
             )
 
+    budget = usage_service.get_request_budget(state, app_config.RATE_LIMIT)
+    if budget["remaining"] <= 0:
+        raise DataTalkError(
+            f"Rate limit exceeded: {app_config.RATE_LIMIT}",
+            status_code=429,
+            error_type="rate_limit_exceeded"
+        )
+
     return message, filename, user_id, state, skip_cache
 
 
 @app.route("/api/chat", methods=["POST"])
 @require_auth
-@limiter.limit(app_config.RATE_LIMIT)
 def chat():
     """
     Non-streaming chat endpoint.
@@ -782,6 +801,7 @@ def chat():
     """
     message, filename, user_id, state, skip_cache = _parse_chat_request()
     usage_service.record_message_request(state, app_config.RATE_LIMIT)
+    rate_limit_store.save_timestamps(user_id, state.message_request_times)
 
     for event_type, payload in run_analysis_pipeline(
         message=message,
@@ -808,7 +828,6 @@ def chat():
 
 @app.route("/api/chat/stream", methods=["POST"])
 @require_auth
-@limiter.limit(app_config.RATE_LIMIT)
 def chat_stream():
     """
     SSE streaming chat endpoint. Yields real-time phase updates.
@@ -817,6 +836,7 @@ def chat_stream():
     """
     message, filename, user_id, state, skip_cache = _parse_chat_request()
     usage_service.record_message_request(state, app_config.RATE_LIMIT)
+    rate_limit_store.save_timestamps(user_id, state.message_request_times)
 
     def generate():
         for event_type, payload in run_analysis_pipeline(
@@ -985,7 +1005,8 @@ def clear_chat():
     # stay in sync if the usage_totals schema ever gains new fields.
     state.usage_totals = None  # type: ignore[assignment]  # forces ensure_usage_state to reinitialise
     usage_service.ensure_usage_state(state)
-    state.message_request_times.clear()
+    # Rate-limit timestamps are NOT cleared here — clearing chat is a
+    # separate concern from rate budgets.  The daily quota must persist.
     state.query_cache.clear()
     state.active_file["filename"] = None
     state.clear_file_cache()

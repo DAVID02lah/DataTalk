@@ -14,17 +14,22 @@ function hasReachedChatSessionLimit() {
 }
 
 function updateNewConversationButtonState() {
-    const newConversationBtn = document.querySelector("#conversation-panel .sidebar-panel-header .sidebar-mini-btn");
+    const newConversationBtn = document.getElementById("new-conversation-btn");
     if (!newConversationBtn) return;
 
     const maxSessions = getMaxChatSessions();
     const sessions = Array.isArray(App.state.chatSessions) ? App.state.chatSessions : [];
     const reachedLimit = sessions.length >= maxSessions;
 
-    newConversationBtn.disabled = reachedLimit;
-    newConversationBtn.title = reachedLimit
-        ? `Maximum ${maxSessions} conversations reached. Delete one to create another.`
-        : "New conversation";
+    if (reachedLimit) {
+        newConversationBtn.style.opacity = "0.55";
+        newConversationBtn.style.pointerEvents = "none";
+        newConversationBtn.title = `Maximum ${maxSessions} conversations reached. Delete one to create another.`;
+    } else {
+        newConversationBtn.style.opacity = "1";
+        newConversationBtn.style.pointerEvents = "auto";
+        newConversationBtn.title = "New conversation";
+    }
 }
 
 // --- Payload application ---
