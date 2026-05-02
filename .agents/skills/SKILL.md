@@ -416,3 +416,16 @@ python server.py
 - **No data pagination**: Full dataset sent as JSON to frontend — large files cause memory pressure.
 - **CDN dependencies without SRI**: 6 external libraries loaded without Subresource Integrity hashes.
 - **Subprocess per query**: A new Python process is spawned for every chat query — adds 0.5-1s overhead.
+
+---
+
+## Coding Rules
+
+- **Clean & Confident Code**: Ensure all code is clean, precise, and without bloat.
+- **Small Functions**: Functions must be small, do exactly one thing, and operate at a single level of abstraction. Split functions to eliminate duplication.
+- **Meaningful Names**: Use meaningful names for variables, functions, and classes to communicate clearly without relying on comments.
+- **Purposeful Comments**: Comments should not state *what* the code does, but rather *WHY* it does it.
+- **Modularization**: Break down large, complex code into smaller, manageable modules or functions to make it easier to understand, test, and maintain.
+- **Folder Structure**: Maintain a well-organized project structure to help locate and modify code easily, reducing complexity and improving scalability/maintainability.
+- **Avoid Deep Nesting**: Keep nesting shallow, as deep nesting makes code harder to follow and test.
+- **KISS (Keep It Simple, Stupid)**: Avoid unnecessary complexity, as complex code is hard to maintain.

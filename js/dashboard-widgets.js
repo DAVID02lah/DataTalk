@@ -11,20 +11,18 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
     const plotId = `dash-plot-${chartId}`;
     const hasChart = chartData.chart && chartData.chart.data;
 
-    const bgStyle = chartData.bgColor ? `background-color:${chartData.bgColor};` : '';
-
     const contentHtml = `
         <div class="widget-header retracted" data-widget-id="${widgetId}">
             <input class="widget-title" value="${escapeHtml(title)}" placeholder="" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
             <div class="widget-actions">
                 <button class="widget-btn" onclick="toggleWidgetCollapse('${widgetId}')" title="Hold to Drag / Click to Collapse">↕</button>
-                <button class="widget-btn" onclick="openWidgetCustomizer('${widgetId}')" title="Customise">⚙️</button>
+                <button class="widget-btn" onclick="openWidgetCustomizer('${widgetId}')" title="Customise">✏️</button>
                 <button class="widget-btn" onclick="openFullscreenChart('${plotId}')" title="Fullscreen">🔍</button>
                 <button class="widget-btn" onclick="downloadDashChart('${plotId}')" title="Download PNG">📥</button>
                 <button class="widget-btn widget-btn-danger" onclick="removeDashChart('${chartId}')" title="Remove">×</button>
             </div>
         </div>
-        <div class="widget-body" id="body-${chartId}" style="${bgStyle}">
+        <div class="widget-body" id="body-${chartId}">
             ${hasChart
             ? `<div id="${plotId}" class="chart-container"></div>`
             : `<div class="widget-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">No chart data</div>`
@@ -96,18 +94,16 @@ function addDashboardCardWidget(cardData, widgetId, layoutOverrides) {
     const aggLabel = formatAggregationLabel(cardData.aggregation || 'count');
     const title = cardData.title || `${aggLabel} of ${cardData.column || 'Unknown'}`;
 
-    const bgStyle = cardData.bgColor ? `background-color:${cardData.bgColor};` : '';
-
     const contentHtml = `
         <div class="widget-header retracted" data-widget-id="${widgetId}">
             <input class="widget-title" value="${escapeHtml(title)}" placeholder="" onchange="updateWidgetTitle('${widgetId}', this.value)" style="border:none; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; font-family:inherit; outline:none; text-overflow:ellipsis; flex:1; min-width:50px;">
             <div class="widget-actions">
                 <button class="widget-btn" onclick="toggleWidgetCollapse('${widgetId}')" title="Hold to Drag / Click to Collapse">↕</button>
-                <button class="widget-btn" onclick="openWidgetCustomizer('${widgetId}')" title="Customise">⚙️</button>
+                <button class="widget-btn" onclick="openWidgetCustomizer('${widgetId}')" title="Customise">✏️</button>
                 <button class="widget-btn widget-btn-danger" onclick="removeDashCard('${cardId}')" title="Remove">×</button>
             </div>
         </div>
-        <div class="widget-body kpi-card-body" id="card-body-${cardId}" style="${bgStyle}">
+        <div class="widget-body kpi-card-body" id="card-body-${cardId}">
             <div class="kpi-value">${escapeHtml(formattedValue)}</div>
             <div class="kpi-label">${escapeHtml(aggLabel)} of ${escapeHtml(cardData.column || '')}</div>
         </div>

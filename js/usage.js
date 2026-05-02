@@ -2,9 +2,49 @@
 
 let usageRefreshTimer = null;
 let lastUsageSummaryAt = 0;
+let usageCountdownTimer = null;
+let usageCountdownEndsAtMs = 0;
 
 const USAGE_SUMMARY_MIN_INTERVAL_MS = 30_000;
 const USAGE_SUMMARY_POLL_INTERVAL_MS = 60_000;
+
+function stopUsageCountdown() {
+    if (usageCountdownTimer) {
+        clearInterval(usageCountdownTimer);
+        usageCountdownTimer = null;
+    }
+    usageCountdownEndsAtMs = 0;
+}
+
+function updateUsageCountdownSubtitle(secondsLeft) {
+    const usageSubtitle = document.getElementById("usage-subtitle");
+    if (usageSubtitle) {
+        usageSubtitle.textContent = `Rate window resets in ${secondsLeft}s`;
+    }
+}
+
+function startUsageCountdown(resetInSeconds) {
+    stopUsageCountdown();
+
+    const initialSeconds = Math.max(0, Math.ceil(Number(resetInSeconds) || 0));
+    if (initialSeconds <= 0) return;
+
+    usageCountdownEndsAtMs = Date.now() + (initialSeconds * 1000);
+
+    const tick = () => {
+        const secondsLeft = Math.max(Math.ceil((usageCountdownEndsAtMs - Date.now()) / 1000), 0);
+        if (secondsLeft > 0) {
+            updateUsageCountdownSubtitle(secondsLeft);
+            return;
+        }
+
+        stopUsageCountdown();
+        updateUsageSummary({ silent: true, force: true });
+    };
+
+    tick();
+    usageCountdownTimer = window.setInterval(tick, 1000);
+}
 
 function renderUsageSummary(summary) {
     const usageTitle = document.getElementById("usage-messages-left");
@@ -32,16 +72,21 @@ function renderUsageSummary(summary) {
 
     if (usageSubtitle) {
         if (remaining === 0 && resetIn > 0) {
-            usageSubtitle.textContent = `Rate window resets in ${resetIn}s`;
+            startUsageCountdown(resetIn);
         } else if (windowSeconds >= 60) {
+            stopUsageCountdown();
             usageSubtitle.textContent = `${Math.round(windowSeconds / 60)} minute rate window`;
         } else {
+            stopUsageCountdown();
             usageSubtitle.textContent = `${windowSeconds}s rate window`;
         }
     }
 
     if (usageFill) {
         usageFill.style.width = `${percentUsed.toFixed(1)}%`;
+        // Make it redder as usage increases: Hue goes from 120 (green) to 0 (red)
+        const hue = Math.max(0, 120 - (percentUsed * 1.2));
+        usageFill.style.background = `hsl(${hue}, 80%, 50%)`;
     }
 
     if (usageTrack) {
@@ -113,4 +158,5 @@ window.addEventListener("beforeunload", () => {
         clearInterval(usageRefreshTimer);
         usageRefreshTimer = null;
     }
+    stopUsageCountdown();
 });

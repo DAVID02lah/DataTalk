@@ -19,7 +19,7 @@ MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024
 
 # Magic Numbers extracted from backend execution logic
 MAX_RETRIES = 2
-CHAT_HISTORY_CAP = 5
+CHAT_HISTORY_CAP = 10
 QUERY_CACHE_SIZE = 300
 EXEC_TIMEOUT = 60
 

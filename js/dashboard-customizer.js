@@ -22,8 +22,6 @@ function openWidgetCustomizer(widgetId) {
         activeCustomizerChartId = null;
         populateWidgetTitle();
     }
-
-    populateBgColorField();
     panel.classList.add('visible');
 }
 
@@ -54,13 +52,6 @@ function populateWidgetTitle() {
     if (!titleInput) return;
     const stateItem = findWidgetStateItem(activeCustomizerWidgetId);
     titleInput.value = stateItem?.title || '';
-}
-
-function populateBgColorField() {
-    const input = document.getElementById('custom-bg-color');
-    if (!input) return;
-    const stateItem = findWidgetStateItem(activeCustomizerWidgetId);
-    input.value = stateItem?.bgColor || '#ffffff';
 }
 
 function populateChartFields() {
@@ -234,15 +225,6 @@ function applyCustomLegend() {
     }
 }
 
-function applyWidgetBgColor() {
-    if (!activeCustomizerWidgetId) return;
-    const input = document.getElementById('custom-bg-color');
-    if (!input) return;
-
-    const bodyEl = findWidgetBodyElement(activeCustomizerWidgetId);
-    if (bodyEl) bodyEl.style.backgroundColor = input.value;
-}
-
 // --- Save ---
 
 async function saveCustomizedChart() {
@@ -255,17 +237,6 @@ async function saveCustomizedChart() {
 
     try {
         showSaveButtonState(saveBtn, 'saving');
-
-        // Default white is treated as "no custom color" to keep serialised state minimal
-        const bgInput = document.getElementById('custom-bg-color');
-        if (bgInput) {
-            const color = bgInput.value;
-            if (color && color !== '#ffffff') {
-                stateItem.bgColor = color;
-            } else {
-                delete stateItem.bgColor;
-            }
-        }
 
         // Plotly stores chart data in the DOM — snapshot it to persist across sessions
         if (activeCustomizerChartId) {
