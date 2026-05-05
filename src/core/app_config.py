@@ -3,15 +3,19 @@
 import os
 
 DEBUG = False
-PORT = 5000
+PORT = int(os.getenv("PORT", "5000"))
+HOST = os.getenv("HOST", "0.0.0.0")
 HTTPS_ENABLED = os.getenv("HTTPS_ENABLED", "").lower() in {"1", "true", "yes", "on"}
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "")
 
 def get_allowed_cors_origins():
-    # Only allow local access
+    """Build CORS origin list from env var, falling back to localhost for dev."""
+    if ALLOWED_ORIGINS:
+        return [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
     protocol = "https" if HTTPS_ENABLED else "http"
     return [
         f"{protocol}://localhost:{PORT}",
-        f"{protocol}://[127.0.0.1]"
+        f"{protocol}://127.0.0.1:{PORT}",
     ]
 
 MAX_UPLOAD_MB = 1

@@ -22,8 +22,11 @@
     function updateActivityTime() {
         if (throttleTimeoutId) return;
 
+        // Leading-edge throttle: update the timestamp IMMEDIATELY so
+        // checkInactivity() never sees a stale value while the user is active.
+        // The timeout only suppresses redundant follow-up events for performance.
+        lastActiveTime = Date.now();
         throttleTimeoutId = setTimeout(() => {
-            lastActiveTime = Date.now();
             throttleTimeoutId = null;
         }, THROTTLE_LIMIT_MS);
     }

@@ -321,18 +321,18 @@
                 <label>Trace Colors</label>
                 <div id="custom-color-pickers"></div>
             </div>
-            <!-- X-Axis (chart only) -->
-            <div class="customizer-section" data-chart-only>
+            <!-- X-Axis (chart only, Cartesian only) -->
+            <div class="customizer-section" data-chart-only data-axis-only>
                 <label>X-Axis Label</label>
                 <input type="text" id="custom-xaxis" oninput="applyCustomAxis('x')" placeholder="X-axis label...">
             </div>
-            <!-- Y-Axis (chart only) -->
-            <div class="customizer-section" data-chart-only>
+            <!-- Y-Axis (chart only, Cartesian only) -->
+            <div class="customizer-section" data-chart-only data-axis-only>
                 <label>Y-Axis Label</label>
                 <input type="text" id="custom-yaxis" oninput="applyCustomAxis('y')" placeholder="Y-axis label...">
             </div>
-            <!-- Scale (chart only) -->
-            <div class="customizer-section" data-chart-only>
+            <!-- Scale (chart only, Cartesian only) -->
+            <div class="customizer-section" data-chart-only data-axis-only>
                 <label>Y-Axis Scale</label>
                 <select id="custom-scale" onchange="applyCustomScale()">
                     <option value="linear">Linear</option>

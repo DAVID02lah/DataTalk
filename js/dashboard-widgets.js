@@ -57,8 +57,10 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
                         layoutOverrides: {
                             width: undefined,
                             height: undefined,
-                            margin: { l: 50, r: 30, t: 30, b: 50 },
+                            margin: { l: 60, r: 30, t: 30, b: 60, autoexpand: true },
                             dragmode: false,
+                            xaxis: { automargin: true },
+                            yaxis: { automargin: true },
                         },
                         plotConfigOverrides: {
                             responsive: true,
