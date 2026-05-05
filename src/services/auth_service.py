@@ -8,6 +8,7 @@ a Flask decorator for protecting API routes.
 import re
 import base64
 import functools
+import hashlib
 import json
 import logging
 import threading
@@ -28,6 +29,11 @@ _supabase: Client | None = None
 _supabase_service: Client | None = None
 _token_cache_lock = threading.Lock()
 _verified_token_cache: dict[str, tuple[float, dict]] = {}
+
+# Per-token locks prevent concurrent getUser() calls for the same token
+# during cold-start or cache eviction windows.
+_verification_locks: dict[str, threading.Lock] = {}
+_verification_locks_guard = threading.Lock()
 
 
 def _decode_jwt_exp_unverified(token: str) -> int | None:
@@ -88,6 +94,27 @@ def _set_cached_verified_token(token: str, user_info: dict) -> None:
             for cached_token in list(_verified_token_cache.keys())[:200]:
                 if cached_token != token:
                     _verified_token_cache.pop(cached_token, None)
+
+
+def _evict_cached_token(token: str) -> None:
+    """Remove a token from the verification cache (e.g. on logout)."""
+    with _token_cache_lock:
+        _verified_token_cache.pop(token, None)
+
+
+def _get_verification_lock(token_key: str) -> threading.Lock:
+    """Return a stable lock for a token hash to deduplicate concurrent verifications."""
+    with _verification_locks_guard:
+        lock = _verification_locks.get(token_key)
+        if lock is None:
+            lock = threading.Lock()
+            _verification_locks[token_key] = lock
+        # Prevent unbounded growth of lock registry.
+        if len(_verification_locks) > 500:
+            for stale_key in list(_verification_locks.keys())[:200]:
+                if stale_key != token_key:
+                    _verification_locks.pop(stale_key, None)
+        return lock
 
 
 def _token_from_authorization_header(header_value: str) -> str | None:
@@ -228,28 +255,38 @@ def login(email: str, password: str) -> dict:
 
 def verify_token(access_token: str) -> dict | None:
     """
-    Verify a Supabase JWT access token by calling getUser().
-    Returns user info dict or None if invalid.
+    Verify a Supabase JWT access token.
+    Uses a dedup lock so concurrent cold-start requests only trigger one
+    network call for the same token.
     """
     cached = _get_cached_verified_token(access_token)
     if cached is not None:
         return cached
 
-    sb = get_supabase()
-    try:
-        result = sb.auth.get_user(access_token)
-        user = getattr(result, "user", None)
-        if not user:
+    # Serialise concurrent verifications of the same token to avoid
+    # a thundering-herd of getUser() calls on server cold-start.
+    token_key = hashlib.sha256(access_token.encode()).hexdigest()[:16]
+    lock = _get_verification_lock(token_key)
+    with lock:
+        cached = _get_cached_verified_token(access_token)
+        if cached is not None:
+            return cached
+
+        sb = get_supabase()
+        try:
+            result = sb.auth.get_user(access_token)
+            user = getattr(result, "user", None)
+            if not user:
+                return None
+            user_info = {
+                "id": str(user.id),
+                "email": user.email,
+            }
+            _set_cached_verified_token(access_token, user_info)
+            return user_info
+        except Exception as e:
+            logger.debug("Token verification failed: %s", e)
             return None
-        user_info = {
-            "id": str(user.id),
-            "email": user.email,
-        }
-        _set_cached_verified_token(access_token, user_info)
-        return user_info
-    except Exception as e:
-        logger.debug("Token verification failed: %s", e)
-        return None
 
 
 def get_profile(user_id: str) -> dict | None:
@@ -294,6 +331,9 @@ def update_profile(user_id: str, display_name: str) -> dict:
 
 def logout(access_token: str) -> bool:
     """Sign out the user (invalidates the refresh token server-side)."""
+    # Evict before the network call so a captured token is immediately
+    # rejected even if the Supabase call fails.
+    _evict_cached_token(access_token)
     try:
         sb = get_supabase_service()
         sb.auth.admin.sign_out(access_token)

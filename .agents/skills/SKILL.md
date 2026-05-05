@@ -410,10 +410,10 @@ python server.py
 - **Dual chat pipeline**: `chat()` and `chat_stream()` duplicate ~360 lines of pipeline logic. Changes must be applied in both.
 - **No rate limiting**: Chat and suggestion endpoints can be abused with rapid requests.
 - **No token refresh**: Expired JWTs require re-authentication (no `/api/auth/refresh` endpoint).
-- **Token verified via network**: Every request calls Supabase `getUser()` API — no local JWT validation.
+- **Token verified via network on first request**: Subsequent requests use an in-memory TTL cache (600s) with dedup locks to prevent thundering-herd on cold start. Full local JWT verification (PyJWT) is available if `SUPABASE_JWT_SECRET` is configured.
 - **Desktop-only UI**: No responsive design for the dashboard. Sidebar is fixed 260px, grid is always 3 columns.
 - **File types**: Only CSV, XLS, XLSX are supported.
-- **No data pagination**: Full dataset sent as JSON to frontend — large files cause memory pressure.
+- **Data pagination**: `/api/data/<filename>` supports server-side pagination (`page`, `per_page` query params). The frontend loads the first page immediately and streams remaining pages in the background.
 - **CDN dependencies without SRI**: 6 external libraries loaded without Subresource Integrity hashes.
 - **Subprocess per query**: A new Python process is spawned for every chat query — adds 0.5-1s overhead.
 

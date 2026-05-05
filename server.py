@@ -421,6 +421,12 @@ def handle_file_too_large(_err):
     }), 413
 
 
+@app.route("/api/health")
+def health_check():
+    """Health check for cloud platform liveness probes."""
+    return jsonify({"status": "healthy", "service": "datatalk"})
+
+
 # ==============================================================
 # Routes: Authentication
 # ==============================================================
@@ -642,12 +648,43 @@ def data_summary(filename):
 @app.route("/api/data/<path:filename>", methods=["GET"])
 @require_auth
 def get_full_data(filename):
-    """Get the full dataset for the data connector."""
+    """Get paginated dataset rows for the data connector grid.
+
+    Query params: page (default 1), per_page (default DEFAULT_PAGE_SIZE).
+    First-page responses prepend column headers into the `data` array so
+    Handsontable can initialise its header row from the same payload.
+    """
     state = _get_user_state()
     _activate_file(state, filename)
     df = _get_dataframe(filename, user_id=g.user_id, state=state)
-    data = [df.columns.tolist()] + df.fillna("").values.tolist()
-    return jsonify({"filename": filename, "data": data})
+
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", app_config.DEFAULT_PAGE_SIZE, type=int)
+
+    total_rows = len(df)
+    columns = df.columns.tolist()
+
+    # Slice before serializing to keep memory bounded to one page.
+    per_page = max(1, min(int(per_page or 50), app_config.MAX_PAGE_SIZE))
+    total_pages = max(1, -(-total_rows // per_page))
+    page = max(1, min(int(page or 1), total_pages))
+    start = (page - 1) * per_page
+    end = start + per_page
+
+    rows = df.iloc[start:end].fillna("").values.tolist()
+
+    # Prepend column headers on first page so the grid can initialise.
+    data_payload = ([columns] + rows) if page == 1 else rows
+
+    return jsonify({
+        "filename": filename,
+        "data": data_payload,
+        "columns": columns,
+        "page": page,
+        "per_page": per_page,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+    })
 
 
 @app.route("/api/data/<path:filename>", methods=["PUT"])
@@ -1276,6 +1313,7 @@ if __name__ == "__main__":
         ssl_context = (cert_path, key_path)
         protocol = "https"
 
-    _log_event("server_start", port=app_config.PORT, debug=app_config.DEBUG,
-               protocol=protocol)
-    app.run(debug=app_config.DEBUG, port=app_config.PORT, ssl_context=ssl_context)
+    _log_event("server_start", host=app_config.HOST, port=app_config.PORT,
+               debug=app_config.DEBUG, protocol=protocol)
+    app.run(host=app_config.HOST, debug=app_config.DEBUG, port=app_config.PORT,
+            ssl_context=ssl_context)

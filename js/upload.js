@@ -400,7 +400,8 @@ async function loadDatasetForPath(filePath, options = {}) {
 
     try {
         const summaryUrl = `${App.API_BASE}/api/data-summary/${encodePathForRoute(normalizedPath)}`;
-        const fullDataUrl = `${App.API_BASE}/api/data/${encodePathForRoute(normalizedPath)}`;
+        // Fetch only the first page to keep initial load fast and memory-bounded.
+        const fullDataUrl = `${App.API_BASE}/api/data/${encodePathForRoute(normalizedPath)}?page=1&per_page=200`;
 
         const [summaryResult, fullDataResult] = await Promise.all([
             fetchApiJson(summaryUrl, { headers: App.getAuthHeaders() }),
@@ -417,6 +418,11 @@ async function loadDatasetForPath(filePath, options = {}) {
 
         if (fullDataResp.ok && Array.isArray(fullData?.data)) {
             loadGrid(fullData.data || []);
+            // Append remaining pages in the background so the grid is
+            // immediately interactive while extra rows stream in.
+            if (fullData.total_pages > 1) {
+                loadRemainingPages(normalizedPath, fullData);
+            }
         } else {
             const previewGrid = summaryPreviewToGridData(summaryData.summary);
             if (previewGrid.length > 0) {
@@ -438,6 +444,31 @@ async function loadDatasetForPath(filePath, options = {}) {
             showAppError(e.message || "Failed to load dataset.");
         }
         return false;
+    }
+}
+
+async function loadRemainingPages(filePath, firstPageResult) {
+    const { total_pages, per_page } = firstPageResult;
+    if (!App.state.hot || total_pages <= 1) return;
+
+    for (let page = 2; page <= total_pages; page++) {
+        // Stop appending if the user navigated away from this file.
+        if (App.state.activeFile?.filename !== filePath) break;
+
+        try {
+            const url = `${App.API_BASE}/api/data/${encodePathForRoute(filePath)}?page=${page}&per_page=${per_page}`;
+            const { response, data } = await fetchApiJson(url, {
+                headers: App.getAuthHeaders(),
+            });
+            if (!response.ok || !Array.isArray(data?.data)) break;
+
+            const currentData = App.state.hot.getData();
+            const merged = [...currentData, ...data.data];
+            App.state.hot.loadData(merged);
+        } catch (e) {
+            console.warn(`Background page ${page} load failed:`, e);
+            break;
+        }
     }
 }
 

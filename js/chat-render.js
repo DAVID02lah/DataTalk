@@ -75,14 +75,25 @@ function mountPlotlyChart(chartId, chartJson, options = {}) {
 
     setTimeout(() => {
         try {
+            const sourceLayout = chartJson.layout || {};
+
+            // Merge automargin into axes so Plotly expands margins for long labels
+            const xaxis = { automargin: true, ...(sourceLayout.xaxis || {}), ...(layoutOverrides.xaxis || {}) };
+            const yaxis = { automargin: true, ...(sourceLayout.yaxis || {}), ...(layoutOverrides.yaxis || {}) };
+
+            // Shallow spread of layoutOverrides, but exclude axis keys (already merged above)
+            const { xaxis: _x, yaxis: _y, ...restOverrides } = layoutOverrides;
+
             const layout = {
-                ...(chartJson.layout || {}),
+                ...sourceLayout,
+                xaxis,
+                yaxis,
                 template: "plotly_white",
                 font: { family: "Inter, sans-serif" },
                 autosize: true,
                 width: null,
-                margin: { l: 50, r: 30, t: 50, b: 50 },
-                ...layoutOverrides,
+                margin: { l: 60, r: 30, t: 50, b: 60, autoexpand: true },
+                ...restOverrides,
             };
 
             if (stripTitle) {
