@@ -318,7 +318,6 @@ def build_persisted_payload(state) -> dict[str, Any]:
     }
 
     return {
-        "version": 2,
         "active_session_id": getattr(state, "active_session_id", None),
         "sessions": sessions,
         "usage_totals": usage,
