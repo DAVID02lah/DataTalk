@@ -13,7 +13,7 @@ from typing import Any
 from src.core import app_config
 from src.services import auth_service
 
-_DASHBOARD_STORE_VERSION = 2
+
 
 
 def empty_session_dashboard() -> dict[str, list[Any]]:
@@ -47,7 +47,6 @@ def normalise_dashboard_store(raw_config: Any, fallback_session_id: str) -> dict
             legacy_cards = _as_list(raw_config.get("cards"))
 
         store = {
-            "version": _DASHBOARD_STORE_VERSION,
             "sessions": {},
         }
         if legacy_charts or legacy_cards:
@@ -64,7 +63,7 @@ def normalise_dashboard_store(raw_config: Any, fallback_session_id: str) -> dict
 
     sessions.setdefault(fallback_session_id, empty_session_dashboard())
     store["sessions"] = sessions
-    store["version"] = _DASHBOARD_STORE_VERSION
+
     return store
 
 
