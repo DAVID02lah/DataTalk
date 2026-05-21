@@ -76,9 +76,7 @@ function addDashboardChartWidget(chartData, widgetId, layoutOverrides) {
     }
 }
 
-/**
- * Add a single KPI card as a GridStack widget.
- */
+//Add a single KPI card as a GridStack widget.
 function addDashboardCardWidget(cardData, widgetId, layoutOverrides) {
     if (!dashboardGrid || !cardData) return;
 
@@ -228,7 +226,7 @@ function toggleWidgetCollapse(widgetId) {
     const header = document.querySelector(`.widget-header[data-widget-id="${widgetId}"]`);
     if (header) {
         header.classList.toggle('retracted');
-        
+
         // Plotly needs a resize event to recalculate after the header expands
         setTimeout(() => {
             window.dispatchEvent(new Event('resize'));

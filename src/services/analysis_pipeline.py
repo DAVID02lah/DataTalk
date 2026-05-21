@@ -112,6 +112,7 @@ def _run_generated_code_analysis(
     *,
     message: str,
     schema_context_full: str,
+    schema_context_lean: str,
     history_capped: list[dict[str, Any]],
     profile_context: str,
     extracted_data_context: str | None,
@@ -154,7 +155,7 @@ def _run_generated_code_analysis(
             log_event("interpret_started")
             interpretation, usage = gemini_service.interpret_results(
                 message,
-                schema_context_full,
+                schema_context_lean,
                 exec_result,
                 history_capped,
             )
@@ -262,6 +263,7 @@ def run_analysis_pipeline(
         for event_type, payload in _run_generated_code_analysis(
             message=message,
             schema_context_full=schema_context_full,
+            schema_context_lean=schema_context_lean,
             history_capped=history_capped,
             profile_context=profile_context,
             extracted_data_context=extracted_data_context,

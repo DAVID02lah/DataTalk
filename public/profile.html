@@ -140,10 +140,160 @@
             box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.12);
         }
 
-        .field-group input[readonly] {
-            background: var(--surface-secondary);
-            color: var(--text-light);
-            cursor: default;
+        .danger-zone {
+            margin-top: 10px;
+            padding: 16px;
+            border: 1px solid #fee4e2;
+            border-radius: 12px;
+            background-color: #fef3f2;
+        }
+
+        .danger-zone h3 {
+            margin: 0 0 6px 0;
+            color: #b42318;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .danger-zone p {
+            margin: 0 0 14px 0;
+            color: #b42318;
+            font-size: 0.84rem;
+            line-height: 1.4;
+        }
+
+        .btn-danger {
+            border: 1px solid #fda29b;
+            background: #d92d20;
+            color: #fff;
+            border-radius: 10px;
+            padding: 9px 16px;
+            font-size: 0.88rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.2s ease, background-color 0.2s ease;
+        }
+
+        .btn-danger:hover {
+            background: #b42318;
+            transform: translateY(-1px);
+        }
+
+        /* Custom Confirmation Modal Styles */
+        .chart-fullscreen-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            z-index: 2000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.2s ease;
+        }
+
+        .chart-fullscreen-overlay.visible {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .chart-fullscreen-container {
+            background: var(--surface-primary, #ffffff);
+            border-radius: 16px;
+            padding: 24px;
+            width: 90vw;
+            max-width: 520px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            position: relative;
+        }
+
+        .chart-fullscreen-container .close-fullscreen {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-light, #5f6368);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+            line-height: 1;
+        }
+
+        .chart-fullscreen-container .close-fullscreen:hover {
+            background: var(--surface-hover, #f1f3f4);
+        }
+
+        .modal-compact {
+            max-width: 520px;
+            padding: 24px;
+        }
+
+        .modal-title {
+            margin: 0;
+            color: var(--text-color, #202124);
+            font-size: 1.15rem;
+            font-weight: 600;
+        }
+
+        .modal-subtitle {
+            margin: 8px 0 0;
+            color: var(--text-light, #5f6368);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .modal-actions {
+            margin-top: 20px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .btn-dashboard-action {
+            background: var(--surface-primary, #ffffff);
+            border: 1px solid var(--border-color, #dadce0);
+            color: var(--text-color, #202124);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+            font-family: var(--font-family);
+        }
+
+        .btn-dashboard-action:hover {
+            background: var(--surface-hover, #f1f3f4);
+            border-color: var(--text-light, #5f6368);
+        }
+
+        .btn-dashboard-action.btn-dashboard-danger {
+            background: #d92d20;
+            border-color: #fda29b;
+            color: #ffffff;
+        }
+
+        .btn-dashboard-action.btn-dashboard-danger:hover {
+            background: #b42318;
+            border-color: #d92d20;
+            color: #ffffff;
         }
 
         .profile-footer {
@@ -221,16 +371,24 @@
                 <div class="profile-avatar-wrap">
                     <div class="profile-avatar" id="profile-avatar">?</div>
                 </div>
-                <form class="profile-fields" id="profile-form">
-                    <div class="field-group">
-                        <label for="display-name">Display Name</label>
-                        <input type="text" id="display-name" maxlength="50" required>
+                <div style="display: flex; flex-direction: column; gap: 20px; width: 100%;">
+                    <form class="profile-fields" id="profile-form">
+                        <div class="field-group">
+                            <label for="display-name">Display Name</label>
+                            <input type="text" id="display-name" maxlength="50" required>
+                        </div>
+                        <div class="field-group">
+                            <label for="email">Email Address</label>
+                            <input type="email" id="email" readonly>
+                        </div>
+                    </form>
+
+                    <div class="danger-zone">
+                        <h3>Danger Zone</h3>
+                        <p>Permanently delete your account and all associated datasets, chat history, and dashboard widgets. This is irreversible.</p>
+                        <button type="button" class="btn-danger" id="delete-account-btn">Delete Account</button>
                     </div>
-                    <div class="field-group">
-                        <label for="email">Email Address</label>
-                        <input type="email" id="email" readonly>
-                    </div>
-                </form>
+                </div>
             </div>
 
             <footer class="profile-footer">
@@ -238,6 +396,19 @@
                 <button type="submit" form="profile-form" class="btn btn-primary save-btn" id="save-btn">Save Changes</button>
             </footer>
         </section>
+    </div>
+
+    <!-- Custom Account Deletion Modal -->
+    <div class="chart-fullscreen-overlay" id="confirm-modal-overlay">
+        <div class="chart-fullscreen-container modal-compact">
+            <button class="close-fullscreen" id="confirm-modal-close" aria-label="Close Modal">×</button>
+            <h3 class="modal-title" id="confirm-modal-title">Delete Account</h3>
+            <p class="modal-subtitle" id="confirm-modal-message">⚠️ WARNING: Are you absolutely sure you want to permanently delete your account?<br><br>This will permanently delete:<br>• Your user profile details<br>• All uploaded datasets and files<br>• Your complete chat session history<br>• Your saved dashboard widget configurations<br><br>This action is <strong>IRREVERSIBLE</strong> and cannot be undone.</p>
+            <div class="modal-actions">
+                <button class="btn-dashboard-action" id="confirm-modal-cancel">Cancel</button>
+                <button class="btn-dashboard-action btn-dashboard-primary btn-dashboard-danger" id="confirm-modal-confirm">Delete Account</button>
+            </div>
+        </div>
     </div>
 
     <script src="js/auth-client.js"></script>
@@ -387,6 +558,69 @@
                     const avatar = document.getElementById("profile-avatar");
                     if (avatar) {
                         avatar.textContent = avatarInitials(nameInput.value);
+                    }
+                });
+            }
+
+            const deleteBtn = document.getElementById("delete-account-btn");
+
+            // Modal elements
+            const modalOverlay = document.getElementById("confirm-modal-overlay");
+            const modalCloseBtn = document.getElementById("confirm-modal-close");
+            const modalCancelBtn = document.getElementById("confirm-modal-cancel");
+            const modalConfirmBtn = document.getElementById("confirm-modal-confirm");
+
+            function showModal() {
+                if (modalOverlay) {
+                    modalOverlay.classList.add("visible");
+                }
+            }
+
+            function hideModal() {
+                if (modalOverlay) {
+                    modalOverlay.classList.remove("visible");
+                }
+            }
+
+            if (deleteBtn) {
+                deleteBtn.addEventListener("click", showModal);
+            }
+
+            if (modalCloseBtn) {
+                modalCloseBtn.addEventListener("click", hideModal);
+            }
+
+            if (modalCancelBtn) {
+                modalCancelBtn.addEventListener("click", hideModal);
+            }
+
+            if (modalConfirmBtn) {
+                modalConfirmBtn.addEventListener("click", async () => {
+                    modalConfirmBtn.disabled = true;
+                    modalConfirmBtn.textContent = "Deleting...";
+                    if (modalCloseBtn) modalCloseBtn.disabled = true;
+                    if (modalCancelBtn) modalCancelBtn.disabled = true;
+                    setStatus("");
+
+                    try {
+                        const response = await fetch(`${API_BASE}/api/profile`, {
+                            method: "DELETE",
+                            headers: getAuthHeaders(),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok || data.error) {
+                            throw new Error(data.error || "Failed to delete account.");
+                        }
+
+                        // Successfully deleted! Evict session and redirect to login
+                        signOut();
+                    } catch (error) {
+                        setStatus(error.message || "Failed to delete account.", "error");
+                        modalConfirmBtn.disabled = false;
+                        modalConfirmBtn.textContent = "Delete Account";
+                        if (modalCloseBtn) modalCloseBtn.disabled = false;
+                        if (modalCancelBtn) modalCancelBtn.disabled = false;
+                        hideModal();
                     }
                 });
             }

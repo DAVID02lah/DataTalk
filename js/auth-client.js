@@ -5,6 +5,7 @@
     const LEGACY_STORAGE_KEYS = ["dt_access_token", "dt_refresh_token", "dt_user"];
     const SESSION_USER_KEY = "dt_user_session";
 
+    // Clears legacy authentication tokens from localStorage to keep credentials secure.
     function clearLegacyStorage() {
         LEGACY_STORAGE_KEYS.forEach((key) => {
             try {
@@ -15,6 +16,7 @@
         });
     }
 
+    // Removes the temporarily cached user object from sessionStorage on signout or expiry.
     function clearCachedUser() {
         try {
             sessionStorage.removeItem(SESSION_USER_KEY);
@@ -23,6 +25,7 @@
         }
     }
 
+    // Caches non-sensitive user metadata in sessionStorage for instant UI responsiveness.
     function setCachedUser(user) {
         if (!user || typeof user !== "object") {
             clearCachedUser();
@@ -36,6 +39,7 @@
         }
     }
 
+    // Retrieves and parses the temporarily cached user metadata for UI rendering.
     function getCachedUser() {
         try {
             const raw = sessionStorage.getItem(SESSION_USER_KEY);
@@ -47,21 +51,24 @@
         }
     }
 
+    // Utility to construct HTTP request headers, merging them with any custom parameters.
     function getAuthHeaders(extra = {}) {
         return {
-            ...extra,
+            ...extra, //spread operator, unpack all key prop from exist obje to new
         };
     }
 
+    // Wrapper for the native fetch API to automatically parse JSON and pass credentials.
     async function fetchJson(path, options = {}) {
         const response = await fetch(`${API_BASE}${path}`, {
             credentials: "same-origin",
-            ...options,
+            ...options, //spread operator, unpack all key prop from exist obje to new
         });
         const data = await response.json().catch(() => ({}));
         return { response, data };
     }
 
+    // Validates the current session status with the backend and updates the cached user info.
     async function getSession() {
         try {
             const { response, data } = await fetchJson("/api/auth/session", {
@@ -78,6 +85,7 @@
         }
     }
 
+    // Performs backend logout API call, destroys all local session states, and redirects to login page.
     async function signOut(options = {}) {
         const { redirect = true } = options;
 
@@ -99,6 +107,7 @@
 
     clearLegacyStorage();
 
+    // Exposes the public authentication API to the global window scope for other scripts to access.
     window.AuthClient = {
         API_BASE,
         clearLegacyStorage,

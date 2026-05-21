@@ -407,3 +407,45 @@ def update_password(access_token: str, new_password: str) -> dict:
         if isinstance(e, AuthenticationError):
             raise
         raise AuthenticationError(error_msg)
+
+
+def delete_account(user_id: str) -> None:
+    """Delete all user database records, storage files, and their Supabase Auth account."""
+    sb_service = get_supabase_service()
+
+    # 1. Clean up user storage files first (dynamic import to avoid circular dependency)
+    try:
+        from src.services.data_service import get_dataset_bucket
+        from werkzeug.utils import secure_filename
+        
+        bucket = get_dataset_bucket()
+        user_prefix = secure_filename(str(user_id))
+        
+        entries = bucket.list(user_prefix)
+        if entries:
+            paths = [
+                f"{user_prefix}/{entry['name']}"
+                for entry in entries
+                if isinstance(entry, dict) and "name" in entry
+            ]
+            if paths:
+                bucket.remove(paths)
+                logger.info("Successfully deleted storage files for user %s: %s", user_id, paths)
+    except Exception as e:
+        logger.error("Failed to delete storage files for user %s: %s", user_id, e)
+
+    # 2. Delete database rows using the service client to bypass RLS/foreign key blockers
+    for table_name in ("dashboard_configs", "chat_sessions", "profiles"):
+        try:
+            sb_service.table(table_name).delete().eq("user_id" if table_name != "profiles" else "id", user_id).execute()
+            logger.info("Successfully deleted user %s records from %s", user_id, table_name)
+        except Exception as e:
+            logger.error("Failed to delete from %s during user deletion: %s", table_name, e)
+
+    # 3. Delete the user from Supabase Auth
+    try:
+        sb_service.auth.admin.delete_user(user_id)
+        logger.info("Successfully deleted user auth record %s from Supabase Auth", user_id)
+    except Exception as e:
+        logger.error("Failed to delete user %s from Supabase Auth: %s", user_id, e)
+        raise ValidationError("Failed to delete account from authentication server.")
