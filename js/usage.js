@@ -1,13 +1,15 @@
-// Usage tracking — sidebar budget/token display and auto-refresh.
+// Usage tracking — handle client usage tracking and limit managemt, sidebar budget/token display and auto-refresh.
 
 let usageRefreshTimer = null;
 let lastUsageSummaryAt = 0;
 let usageCountdownTimer = null;
 let usageCountdownEndsAtMs = 0;
 
+// Minimum delay (30 seconds) allowed between server requests to fetch the usage summary.
 const USAGE_SUMMARY_MIN_INTERVAL_MS = 30_000;
 const USAGE_SUMMARY_POLL_INTERVAL_MS = 60_000;
 
+// Stops the active rate limit countdown timer and resets its tracking state.
 function stopUsageCountdown() {
     if (usageCountdownTimer) {
         clearInterval(usageCountdownTimer);
@@ -16,6 +18,7 @@ function stopUsageCountdown() {
     usageCountdownEndsAtMs = 0;
 }
 
+// Updates the rate limit reset countdown text shown in the sidebar subtitle.
 function updateUsageCountdownSubtitle(secondsLeft) {
     const usageSubtitle = document.getElementById("usage-subtitle");
     if (usageSubtitle) {
@@ -23,6 +26,7 @@ function updateUsageCountdownSubtitle(secondsLeft) {
     }
 }
 
+// Starts a second-by-second countdown timer that updates the rate limit reset UI.
 function startUsageCountdown(resetInSeconds) {
     stopUsageCountdown();
 
@@ -46,6 +50,7 @@ function startUsageCountdown(resetInSeconds) {
     usageCountdownTimer = window.setInterval(tick, 1000);
 }
 
+// Renders the visual usage statistics (progress bars, tokens, cost metrics) in the sidebar.
 function renderUsageSummary(summary) {
     const usageTitle = document.getElementById("usage-messages-left");
     const usageSubtitle = document.getElementById("usage-subtitle");
@@ -101,6 +106,7 @@ function renderUsageSummary(summary) {
     }
 }
 
+// Fetches current API token usage and message quotas from the server database.
 async function updateUsageSummary(options = {}) {
     const { silent = false, force = false } = options;
 
@@ -127,6 +133,7 @@ async function updateUsageSummary(options = {}) {
     }
 }
 
+// To update user token and message usage periodically.
 function startUsageSummaryAutoRefresh() {
     if (usageRefreshTimer) {
         clearInterval(usageRefreshTimer);
@@ -152,7 +159,7 @@ function startUsageSummaryAutoRefresh() {
     }
 }
 
-// Clean up the polling timer when the page unloads.
+// Clean up the polling timer when the page unloads. (mem leak)
 window.addEventListener("beforeunload", () => {
     if (usageRefreshTimer) {
         clearInterval(usageRefreshTimer);

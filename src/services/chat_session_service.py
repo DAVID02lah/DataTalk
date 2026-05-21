@@ -353,15 +353,11 @@ def restore_from_persisted_payload(state, payload: Any, user_id: str, fallback_f
             }
             state.chat_sessions.append(session)
 
-        state.active_session_id = payload.get("active_session_id")
-        state.usage_totals = payload.get("usage_totals") or {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "cost_usd": 0.0,
-            "cost_myr": 0.0,
-        }
+        loaded_usage = payload.get("usage_totals")
+        if loaded_usage:
+            state.usage_totals = loaded_usage
 
+        state.active_session_id = payload.get("active_session_id")
         active = set_active_session(state, state.active_session_id or "")
         if active is None and state.chat_sessions:
             state.active_session_id = state.chat_sessions[0]["id"]
@@ -394,10 +390,12 @@ def restore_from_persisted_payload(state, payload: Any, user_id: str, fallback_f
     state.chat_sessions = [session]
     state.active_session_id = session["id"]
     state.chat_history = legacy_messages
-    state.usage_totals = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "cost_usd": 0.0,
-        "cost_myr": 0.0,
-    }
+
+    if not getattr(state, "usage_totals", None):
+        state.usage_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cost_usd": 0.0,
+            "cost_myr": 0.0,
+        }

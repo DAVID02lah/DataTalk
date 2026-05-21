@@ -1,8 +1,9 @@
-// data-chat.js — Top-level glue and shared helpers.
+// data-chat.js — shared helpers and universal tools.
 // Module-specific logic lives in chat-render.js, chat.js, sessions.js, upload.js, usage.js.
 
 // --- Path helpers ---
 
+// Normalises and URL-encodes file paths safely before sending them to backend routing endpoints.
 function encodePathForRoute(pathValue) {
     return String(pathValue || "")
         .split("/")
@@ -11,12 +12,14 @@ function encodePathForRoute(pathValue) {
         .join("/");
 }
 
+// Extracts the file name (basename) from a full absolute or relative directory path.
 function basenameFromPath(pathValue) {
     const normalized = String(pathValue || "").replace(/\\+/g, "/");
     const parts = normalized.split("/").filter(Boolean);
     return parts.length > 0 ? parts[parts.length - 1] : normalized;
 }
 
+// Converts absolute ISO date strings into friendly, relative timestamps.
 function formatRelativeTimestamp(isoValue) {
     if (!isoValue) return "";
     const ts = new Date(isoValue).getTime();
@@ -31,6 +34,7 @@ function formatRelativeTimestamp(isoValue) {
     return new Date(isoValue).toLocaleDateString();
 }
 
+// Escapes special characters inside string variables to prevent breaking HTML attributes and block XSS.
 function escapeAttr(str) {
     return String(str ?? "")
         .replace(/\\/g, "\\\\")
@@ -44,6 +48,7 @@ function escapeAttr(str) {
 
 // --- Error display ---
 
+// Central controller to dispatch errors to the correct display component based on page state.
 function showAppError(message, options = {}) {
     const { channel = "chat", uploadDropZone = null } = options;
 
@@ -67,6 +72,7 @@ function showAppError(message, options = {}) {
     showErrorToast(message);
 }
 
+// Creates, styles, and slides in a self-dismissing notification banner in the top-right corner.
 function showErrorToast(message) {
     const toastContainerId = "app-error-toast-container";
     let container = document.getElementById(toastContainerId);
@@ -119,6 +125,7 @@ function showErrorToast(message) {
 
 // --- Dashboard sidebar initialization (entry point called from core.js DOMContentLoaded) ---
 
+// Synchronises views with active backend files upon database reconnection.
 async function checkExistingFiles() {
     try {
         await refreshSessionDependentViews({ syncActiveFile: true });
@@ -127,9 +134,10 @@ async function checkExistingFiles() {
     }
 }
 
+// Create blueprint for wireup button, register listeners and get sidebar ready
 async function initializeDashboardSidebarState() {
-    captureDefaultUploadMarkup();
-    bindNewConversationModalControls();
-    await checkExistingFiles();
-    startUsageSummaryAutoRefresh();
+    captureDefaultUploadMarkup();  // create screenshot for upload box html
+    bindNewConversationModalControls(); // set up button for "+ new convo" popup
+    await checkExistingFiles(); // check backend for uploaded files
+    startUsageSummaryAutoRefresh(); // run usage stats card auto-refresh
 }

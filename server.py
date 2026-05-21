@@ -582,6 +582,20 @@ def update_profile():
     return jsonify({"success": True, "profile": profile})
 
 
+@app.route("/api/profile", methods=["DELETE"])
+@require_auth
+def delete_profile():
+    """Delete user account and clear session state."""
+    user_id = g.user_id
+    try:
+        auth_service.delete_account(user_id)
+        session_mgr.remove_state(user_id)
+        return jsonify({"success": True, "message": "Account deleted successfully"})
+    except Exception as e:
+        logger.error("Error during account deletion for %s: %s", user_id, e)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ==============================================================
 # Routes: File Upload & Dataset Access
 # ==============================================================
@@ -763,14 +777,13 @@ Return ONLY a JSON array of 4 strings, no other text. Example:
         response = gemini_service.client.models.generate_content(
             model=gemini_service.MODEL_ID,
             contents=prompt,
+            config=gemini_service.JSON_RESPONSE_CONFIG,
         )
         usage_dict = gemini_service._extract_usage_dict(response)
         _record_and_log_usage(state, usage_dict, "Suggest Questions")
 
         text_raw = getattr(response, "text", "")
         text = text_raw.strip() if isinstance(text_raw, str) else ""
-        text = re.sub(r'^```(?:json)?\s*\n?', '', text)
-        text = re.sub(r'\n?```\s*$', '', text)
         questions = json.loads(text)
 
         if isinstance(questions, list) and len(questions) > 0:
@@ -1038,10 +1051,6 @@ def clear_chat():
     state.chat_history = []
     state.chat_sessions = []
     state.active_session_id = None
-    # Delegate zero-state initialisation to the service layer so both places
-    # stay in sync if the usage_totals schema ever gains new fields.
-    state.usage_totals = None  # type: ignore[assignment]  # forces ensure_usage_state to reinitialise
-    usage_service.ensure_usage_state(state)
     # Rate-limit timestamps are NOT cleared here — clearing chat is a
     # separate concern from rate budgets.  The daily quota must persist.
     state.query_cache.clear()
