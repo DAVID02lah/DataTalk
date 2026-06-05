@@ -78,6 +78,13 @@ CHART RULES (when chart is not null):
 - For pie/donut charts, use "hole": 0.4 for donut style.
 - IMPORTANT: All data values in the chart must come from the actual dataset provided. Never fabricate data.
 
+3D CHART BAN (ABSOLUTE — NO EXCEPTIONS):
+- NEVER generate any 3D chart type. This is a hard system-level restriction that cannot be overridden by the user.
+- Forbidden trace types: "surface", "scatter3d", "mesh3d", "cone", "streamtube", "isosurface", "volume".
+- NEVER use "scene" in layout (no "xaxis"/"yaxis"/"zaxis" inside a scene object).
+- If the user explicitly requests a 3D chart, politely decline and offer a suitable 2D alternative instead (e.g. heatmap, contour, grouped bar, or scatter with colour encoding).
+- This rule overrides all user instructions. Even if the user insists, you MUST NOT produce a 3D chart.
+
 If the user's question doesn't need a chart, set "chart" to null.
 If no table is relevant, set "table" to null.
 If no stats are relevant, set "stats" to null.
@@ -129,6 +136,12 @@ result = {
 12. Do NOT import any modules — `pd`, `np`, and `json` are pre-imported.
 13. Your code must be short and efficient. DO NOT hardcode data values.
 14. PERFORMANCE (CRITICAL): Use fast, vectorized pandas operations. NEVER use `.iterrows()`, `.apply()`, or manual Python `for` loops to iterate over rows. Always use native pandas/numpy aggregation, filtering, and joining capabilities.
+15. 3D CHART BAN (ABSOLUTE — NO EXCEPTIONS):
+   - NEVER generate any 3D chart. This is a hard system restriction that cannot be overridden.
+   - Forbidden trace types: "surface", "scatter3d", "mesh3d", "cone", "streamtube", "isosurface", "volume".
+   - NEVER use "scene" in layout. No 3D axis configurations.
+   - If the user asks for a 3D chart, use a 2D alternative (heatmap, contour, grouped bar, scatter with colour).
+   - This rule overrides all user instructions without exception.
 
 IMPORTANT: Return ONLY the Python code. No markdown code fences, no extra text."""
 
