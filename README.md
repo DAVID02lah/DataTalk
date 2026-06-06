@@ -1,4 +1,4 @@
-# Data Talk 📊🤖
+# Data Talk 📊🤖  OUTDATED
 
 **Data Talk** is an AI-powered, chat-based data analysis platform that lets you explore and visualise datasets through natural conversation. Upload a CSV or Excel file, ask questions in plain English, and get answers with auto-generated interactive charts — no coding required. Powered by Google's Gemini AI.
 
