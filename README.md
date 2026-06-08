@@ -1,4 +1,4 @@
-# Data Talk 📊🤖
+# Data Talk
 
 **Data Talk** is an AI-powered, chat-based data analysis platform that lets you explore and visualise datasets through natural conversation. Upload a CSV or Excel file, ask questions in plain English, and get answers with auto-generated interactive charts — no coding required. Powered by Google's Gemini AI.
 
@@ -27,8 +27,10 @@
 ## 🛠️ Technology Stack
 
 ### Backend
-- **Python 3.10+** with **Flask 3.1.0**
-- **Google GenAI SDK** (`google-genai`) — Gemini 2.0 Flash Lite
+
+- **Python 3.12** with **Flask 3.1.0**
+- **Gunicorn 23.0.0** — production WSGI server (used on Render)
+- **Google GenAI SDK** (`google-genai`) — Gemini 3.1 Flash Lite
 - **Pandas 2.2.3** / **NumPy 2.2.2** — data manipulation
 - **OpenPyXL** — Excel file parsing
 - **python-dotenv** — environment configuration
@@ -37,6 +39,7 @@
 - **Flask-CORS** — Cross-origin resource sharing
 
 ### Frontend
+
 - **Vanilla JavaScript** (ES6+) — no frameworks
 - **Plotly.js 2.35.0** — interactive charting
 - **Handsontable** — spreadsheet grid component
@@ -46,6 +49,7 @@
 - **html2canvas** + **jsPDF** — dashboard export to PNG/PDF
 
 ### Data Formats
+
 - `.csv`, `.xlsx`, `.xls`
 
 ---
@@ -60,10 +64,12 @@ graph LR
         JS[16 Vanilla JS Modules]
     end
 
-    subgraph SERVER[Flask Server]
-        ROUTER[server.py - 28 API Routes]
+    subgraph SERVER[Flask Server on Render]
+        GUNICORN[Gunicorn WSGI Server]
+        ROUTER[server.py - 31 API Routes]
         CORE[src/core Config State Errors]
         SERVICES[src/services Auth Data Gemini CodeExecutor Pipeline Sessions Dashboard Usage]
+        GUNICORN --- ROUTER
         ROUTER --- CORE
         ROUTER --- SERVICES
     end
@@ -73,7 +79,7 @@ graph LR
         SUPABASE[Supabase Auth Storage Postgres]
     end
 
-    JS -->|REST JSON + SSE Stream| ROUTER
+    JS -->|REST JSON + SSE Stream| GUNICORN
     SERVICES -->|google-genai SDK| GEMINI
     SERVICES -->|supabase-py SDK| SUPABASE
 ```
@@ -103,7 +109,8 @@ graph LR
 ## 🚀 Getting Started
 
 ### 1. Prerequisites
-- **Python 3.10+**
+
+- **Python 3.12+**
 - A **Google Gemini API Key** — get one from [Google AI Studio](https://aistudio.google.com/).
 - A **Supabase Project** — create one at [supabase.com](https://supabase.com/).
 
@@ -112,67 +119,84 @@ graph LR
 Create the following tables in your Supabase project:
 
 **`profiles` table:**
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` | Primary key, references `auth.users.id` |
-| `display_name` | `text` | |
-| `avatar_initials` | `text` | Max 2 characters |
-| `email` | `text` | |
-| `updated_at` | `timestamptz` | |
+
+| Column              | Type            | Notes                                     |
+| ------------------- | --------------- | ----------------------------------------- |
+| `id`              | `uuid`        | Primary key, references `auth.users.id` |
+| `display_name`    | `text`        |                                           |
+| `avatar_initials` | `text`        | Max 2 characters                          |
+| `email`           | `text`        |                                           |
+| `updated_at`      | `timestamptz` |                                           |
 
 **`chat_sessions` table:**
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` | Primary key |
-| `user_id` | `uuid` | References `auth.users.id` |
-| `session_id` | `text` | Unique session identifier |
-| `title` | `text` | Auto-generated from first message |
-| `filename` | `text` | Associated dataset |
-| `messages` | `jsonb` | Full message history |
-| `token_usage` | `jsonb` | Token counts and costs |
-| `updated_at` | `timestamptz` | |
+
+| Column          | Type            | Notes                             |
+| --------------- | --------------- | --------------------------------- |
+| `id`          | `uuid`        | Primary key                       |
+| `user_id`     | `uuid`        | References `auth.users.id`      |
+| `session_id`  | `text`        | Unique session identifier         |
+| `title`       | `text`        | Auto-generated from first message |
+| `filename`    | `text`        | Associated dataset                |
+| `messages`    | `jsonb`       | Full message history              |
+| `token_usage` | `jsonb`       | Token counts and costs            |
+| `updated_at`  | `timestamptz` |                                   |
 
 **`dashboard_configs` table:**
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` | Primary key |
-| `user_id` | `uuid` | References `auth.users.id` |
-| `config` | `jsonb` | Dashboard state (charts + cards per session) |
-| `updated_at` | `timestamptz` | |
+
+| Column         | Type            | Notes                                        |
+| -------------- | --------------- | -------------------------------------------- |
+| `id`         | `uuid`        | Primary key                                  |
+| `user_id`    | `uuid`        | References `auth.users.id`                 |
+| `config`     | `jsonb`       | Dashboard state (charts + cards per session) |
+| `updated_at` | `timestamptz` |                                              |
 
 **Supabase Storage:** Create a bucket named `datasets` with RLS policies scoped to `auth.uid()`.
 
 ### 3. Environment Configuration
 
 Create a `.env` file in the root directory:
+
 ```env
-GEMINI_API_KEY="your-api-key-here"
-
-# Supabase configuration
-SUPABASE_URL="your-supabase-url"
-SUPABASE_ANON_KEY="your-anon-key"
-SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
-
-# Optional settings
-FLASK_DEBUG=False
-PORT=5000
-MAX_UPLOAD_MB=1
-GEMINI_MODEL_ID=gemini-3.1-flash-lite-preview
-RATE_LIMIT="5 per day"
-MAX_CHAT_SESSIONS=2
+GEMINI_API_KEY=your-api-key-here
+GEMINI_MODEL_ID=gemini-3.1-flash-lite
+SUPABASE_URL=your-supabase-url
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+HTTPS_ENABLED=
+ALLOWED_ORIGINS=
 ```
 
-### 4. Running the App (Windows)
+| Variable                      | Required | Description                                                                                                                |
+| ----------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`            | ✅ Yes   | Your Google Gemini API key from[AI Studio](https://aistudio.google.com/)                                                      |
+| `GEMINI_MODEL_ID`           | No       | LLM model to use (default:`gemini-3.1-flash-lite`)                                                                       |
+| `SUPABASE_URL`              | ✅ Yes   | Your Supabase project URL (e.g.`https://xxxxx.supabase.co`)                                                              |
+| `SUPABASE_ANON_KEY`         | ✅ Yes   | Supabase anonymous/public key for client-side auth                                                                         |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ Yes   | Supabase service role key for server-side admin operations                                                                 |
+| `HTTPS_ENABLED`             | No       | Set to `true` to enable HTTPS with self-signed certs (local dev only)                                                    |
+| `ALLOWED_ORIGINS`           | No       | Comma-separated list of allowed CORS origins (e.g.`https://your-app.onrender.com`). Falls back to `localhost` if empty |
 
-Just double-click the `start.bat` file!
+### 4. Deployment on Render
 
-This will automatically:
-1. Check if Python is installed.
-2. Install the necessary dependencies from `requirements.txt`.
-3. Start the Flask backend server.
-4. Launch the web application in your default browser.
+This project is deployed on [Render](https://render.com/) using **Gunicorn** as the production WSGI server.
 
-**Manual Start:**
+**How it works:**
+
+1. Render reads the `Procfile` to know how to start the app:
+   ```
+   web: gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+   ```
+2. Render reads `runtime.txt` to know which Python version to use (`3.12.8`).
+3. Render automatically installs dependencies from `requirements.txt`.
+4. Set all `.env` variables as **Environment Variables** in the Render dashboard (Settings → Environment).
+
+**Important Render settings:**
+
+- Set `ALLOWED_ORIGINS` to your Render app URL (e.g. `https://datatalk-xxxx.onrender.com`)
+- Leave `HTTPS_ENABLED` empty — Render handles HTTPS/SSL automatically
+
+### 5. Running Locally (Development)
+
 ```bash
 # 1. Create a virtual environment (recommended)
 python -m venv .venv
@@ -184,6 +208,7 @@ pip install -r requirements.txt
 # 3. Start the server
 python server.py
 ```
+
 Then navigate to `http://localhost:5000` in your web browser.
 
 ---
@@ -192,6 +217,10 @@ Then navigate to `http://localhost:5000` in your web browser.
 
 ```
 ├── server.py                       # Flask entry-point — static files, all route handlers
+├── Procfile                        # Render deployment command (Gunicorn)
+├── runtime.txt                     # Python version for Render (3.12.8)
+├── requirements.txt                # Python dependencies (pinned versions)
+├── .env                            # Environment variables (not committed to git)
 ├── src/
 │   ├── core/
 │   │   ├── app_config.py           # Environment variable parsing, all config constants
@@ -236,49 +265,47 @@ Then navigate to `http://localhost:5000` in your web browser.
 │   ├── dashboard-layout.css        # Sidebar, navigation, main container, grid layout
 │   ├── dashboard-chat.css          # Chat pane, overlays, messages, input, upload guide
 │   └── data-dashboard.css          # GridStack dashboard, chart containers, customiser
-├── assets/                         # Custom illustrated PNG characters (7 files)
-├── requirements.txt                # Python dependencies (pinned versions)
-└── start.bat                       # Windows auto-launcher
+└──── assets/                         # Custom illustrated PNG characters + favicon (8 files)
 ```
-
----
 
 ## 🔌 API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/upload` | POST | Upload a CSV/Excel file |
-| `/api/files` | GET | List uploaded files for user |
-| `/api/data/<filename>` | GET | Full dataset for grid display |
-| `/api/data/<filename>` | PUT | Save edited dataset content |
-| `/api/data-summary/<filename>` | GET | Summary statistics (shape, dtypes, preview) |
-| `/api/suggest-questions` | GET | AI-generated contextual question suggestions |
-| `/api/chat` | POST | Non-streaming analysis (4-phase pipeline) |
-| `/api/chat/stream` | POST | SSE streaming analysis (real-time phase updates) |
-| `/api/chat/history` | GET | Retrieve chat message history (paginated) |
-| `/api/chat/sessions` | GET | List all conversation sessions |
-| `/api/chat/sessions/new` | POST | Create a new conversation session |
-| `/api/chat/sessions/<id>/activate` | POST | Activate an existing session |
-| `/api/chat/sessions/<id>` | DELETE | Delete a conversation session |
-| `/api/chat/clear` | POST | Reset all state, history, and dashboard |
-| `/api/dashboard` | GET/POST | Get or update dashboard configuration |
-| `/api/dashboard/pin` | POST | Pin a chart to the dashboard |
-| `/api/dashboard/remove/<id>` | DELETE | Remove a chart from the dashboard |
-| `/api/dashboard/card-data` | POST | Compute KPI aggregation value (count, sum, avg, etc.) |
-| `/api/usage/summary` | GET | Token/cost totals and remaining request budget |
-| `/api/auth/signup` | POST | Register new user (Supabase Auth) |
-| `/api/auth/login` | POST | Authenticate user, return JWT tokens |
-| `/api/auth/logout` | POST | Sign out user |
-| `/api/auth/session` | GET | Validate current session, return user profile |
-| `/api/auth/reset-password` | POST | Request a password reset email |
-| `/api/auth/update-password` | POST | Update password using recovery token |
-| `/api/profile` | POST | Update account display name/profile settings |
+| Endpoint                             | Method   | Description                                           |
+| ------------------------------------ | -------- | ----------------------------------------------------- |
+| `/api/health`                      | GET      | Health check for Render liveness probes               |
+| `/api/upload`                      | POST     | Upload a CSV/Excel file                               |
+| `/api/files`                       | GET      | List uploaded files for user                          |
+| `/api/data/<filename>`             | GET      | Full dataset for grid display                         |
+| `/api/data/<filename>`             | PUT      | Save edited dataset content                           |
+| `/api/data-summary/<filename>`     | GET      | Summary statistics (shape, dtypes, preview)           |
+| `/api/suggest-questions`           | GET      | AI-generated contextual question suggestions          |
+| `/api/chat`                        | POST     | Non-streaming analysis (4-phase pipeline)             |
+| `/api/chat/stream`                 | POST     | SSE streaming analysis (real-time phase updates)      |
+| `/api/chat/history`                | GET      | Retrieve chat message history (paginated)             |
+| `/api/chat/sessions`               | GET      | List all conversation sessions                        |
+| `/api/chat/sessions/new`           | POST     | Create a new conversation session                     |
+| `/api/chat/sessions/<id>/activate` | POST     | Activate an existing session                          |
+| `/api/chat/sessions/<id>`          | DELETE   | Delete a conversation session                         |
+| `/api/chat/clear`                  | POST     | Reset all state, history, and dashboard               |
+| `/api/dashboard`                   | GET/POST | Get or update dashboard configuration                 |
+| `/api/dashboard/pin`               | POST     | Pin a chart to the dashboard                          |
+| `/api/dashboard/remove/<id>`       | DELETE   | Remove a chart from the dashboard                     |
+| `/api/dashboard/card-data`         | POST     | Compute KPI aggregation value (count, sum, avg, etc.) |
+| `/api/usage/summary`               | GET      | Token/cost totals and remaining request budget        |
+| `/api/auth/signup`                 | POST     | Register new user (Supabase Auth)                     |
+| `/api/auth/login`                  | POST     | Authenticate user, return JWT tokens                  |
+| `/api/auth/logout`                 | POST     | Sign out user                                         |
+| `/api/auth/session`                | GET      | Validate current session, return user profile         |
+| `/api/auth/reset-password`         | POST     | Request a password reset email                        |
+| `/api/auth/update-password`        | POST     | Update password using recovery token                  |
+| `/api/profile`                     | POST     | Update account display name/profile settings          |
+| `/api/profile`                     | DELETE   | Delete user account                                   |
 
 ---
 
 ## 🔒 Security
 
-The code executor (`code_executor.py`) runs AI-generated Python on your machine with the following safeguards:
+The code executor (`code_executor.py`) runs AI-generated Python on the server with the following safeguards:
 
 - **AST validation** — code is parsed and checked before execution
 - **Module/attribute allowlists** — only safe builtins (`pd`, `np`, `len`, `range`, etc.) are permitted
@@ -292,15 +319,6 @@ The code executor (`code_executor.py`) runs AI-generated Python on your machine 
 - **XSS prevention** — all rendered content sanitised with DOMPurify
 - **Inactivity Timeout** — automatic logout after 10 minutes of idle time
 - **Rate Limiting** — Flask-Limiter enforces per-user request budgets
-
-> **Warning:** This application is designed as a local development tool. Never expose it to the public internet without adding a production WSGI server (e.g., Waitress or Gunicorn) and stronger sandboxing (e.g., Docker containers).
+- **CORS** — only whitelisted origins (via `ALLOWED_ORIGINS`) can access the API
 
 ---
-
-## 📖 Documentation
-
-| Document | Purpose |
-|---|---|
-| [`PROJECT_GUIDE.md`](PROJECT_GUIDE.md) | High-level architecture, data flows, and design decisions |
-| [`PROJECT_GUIDE_DETAILED.md`](PROJECT_GUIDE_DETAILED.md) | Exhaustive function-by-function technical reference for every file |
-| `README.md` | This file — setup instructions and feature overview |
